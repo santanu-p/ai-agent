@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from aegisworld_policy import PolicyEngine
 from aegisworld_runtime import AgentKernel, AgentMemory
 from aegisworld_models import ExecutionPolicy, GoalSpec
@@ -44,18 +46,34 @@ def test_agent_kernel_updates_memory_on_success() -> None:
     trace, reflection = kernel.execute_goal("agent_1", goal, policy, memory)
 
     assert trace.outcome == "success"
-    assert reflection is None
+    assert reflection is not None
     assert memory.episodic
     assert f"goal:{goal.goal_id}" in memory.semantic
 
 
-def test_service_workflow_end_to_end() -> None:
-    service = AegisWorldService()
+def test_service_workflow_end_to_end_and_learning(tmp_path: Path) -> None:
+    state_file = tmp_path / "state.json"
+    service = AegisWorldService(state_file=str(state_file))
     agent = service.create_agent({"name": "pilot-agent"})
     goal = service.create_goal({"intent": "Create CI pipeline", "domains": ["dev"]})
 
     response = service.execute(agent["agent_id"], goal["goal_id"])
 
     assert response["trace"]["outcome"] == "success"
-    memory = service.get_memory(agent["agent_id"])
-    assert len(memory["episodic"]) == 1
+    assert response["reflection"] is not None
+    assert service.list_changes()
+    summary = service.learning_summary()
+    assert summary["total_reflections"] >= 1
+
+
+def test_state_persistence_roundtrip(tmp_path: Path) -> None:
+    state_file = tmp_path / "state.json"
+    service = AegisWorldService(state_file=str(state_file))
+    agent = service.create_agent({"name": "persist-agent"})
+    goal = service.create_goal({"intent": "Persist me", "domains": ["dev"]})
+    service.execute(agent["agent_id"], goal["goal_id"])
+
+    reloaded = AegisWorldService(state_file=str(state_file))
+    assert len(reloaded.agents) == 1
+    assert len(reloaded.goals) == 1
+    assert len(reloaded.list_traces()) == 1

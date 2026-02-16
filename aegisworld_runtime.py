@@ -65,7 +65,7 @@ class AgentKernel:
             token_cost=results["token_cost"],
             outcome="success",
         )
-        return trace, None
+        return trace, reflection
 
     def _plan(self, goal: GoalSpec) -> List[str]:
         return [

@@ -1,11 +1,12 @@
 # AegisWorld Prototype
 
-This repository now includes an executable prototype that turns the 90-day plan into a working baseline runtime:
+This repository includes an executable prototype that turns the 90-day plan into a working baseline runtime:
 
 - Core platform types (`GoalSpec`, `ExecutionPolicy`, `TaskTrace`, `ReflectionRecord`, `SecurityIncident`, `AutonomousChangeSet`)
 - Policy engine with budget/latency/tool gates
 - Agent kernel loop implementing Plan → Execute → Observe → Reflect → Patch Memory/Policy → Re-plan
-- In-memory control/runtime service
+- Learning engine for reflection clustering and memory compaction
+- In-memory control/runtime service with JSON snapshot persistence
 - HTTP API surface aligned to the plan endpoints
 
 ## Run API server
@@ -14,15 +15,25 @@ This repository now includes an executable prototype that turns the 90-day plan 
 python server.py
 ```
 
-Then call endpoints such as:
+### Main endpoints
 
 - `POST /v1/goals`
-- `POST /v1/agents`
-- `POST /v1/agents/{agent_id}/execute`
 - `GET /v1/goals/{goal_id}`
+- `POST /v1/agents`
+- `GET /v1/agents/{agent_id}`
+- `POST /v1/agents/{agent_id}/execute`
 - `GET /v1/agents/{agent_id}/memory`
+- `POST /v1/domain/social/projects`
+- `POST /v1/domain/dev/pipelines`
+- `POST /v1/domain/games/projects`
 - `GET /v1/incidents`
 - `POST /v1/policies/simulate`
+- `GET /v1/traces`
+- `GET /v1/reflections`
+- `GET /v1/changes`
+- `GET /v1/learning/summary`
+- `POST /v1/learning/compact?agent_id=...&max_items=...`
+- `GET /healthz`
 
 ## Run tests
 
