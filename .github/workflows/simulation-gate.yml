@@ -1,0 +1,45 @@
+name: Simulation Gate
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+
+jobs:
+  simulation-kpi-gate:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Run simulation suite
+        run: |
+          python tests/simulation/run_simulations.py \
+            --version "${{ github.sha }}" \
+            --output-dir artifacts/simulations
+
+      - name: Upload simulation artifacts and comparison reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: simulation-${{ github.sha }}
+          path: artifacts/simulations/${{ github.sha }}
+          if-no-files-found: warn
+
+  deploy:
+    name: Deploy (blocked by simulation gate)
+    needs: simulation-kpi-gate
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deployment eligibility
+        run: echo "Simulation KPI gate passed. Deployment can proceed."
