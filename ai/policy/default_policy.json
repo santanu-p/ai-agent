@@ -1,0 +1,14 @@
+{
+  "allowed_path_prefixes": ["ai", "configs/policy"],
+  "allowed_config_domains": ["policy", "telemetry", "runtime"],
+  "forbidden_apis": ["eval(", "exec(", "subprocess.Popen", "os.system"],
+  "lint_commands": ["python -m compileall ai"],
+  "typecheck_commands": ["python -m py_compile ai/policy/*.py"],
+  "replay_seed": 1337,
+  "performance_budget": {"frame_time_ms_p95_max": 16.7, "memory_mb_peak_max": 512},
+  "canary_thresholds": {"max_error_rate": 0.01, "max_p95_latency_ms": 250, "max_timeout_rate": 0.005},
+  "save_compatibility": {
+    "required_keys": ["version", "player_id", "world_state", "inventory"],
+    "allowed_version_range": [1, 3]
+  }
+}
