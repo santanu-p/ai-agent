@@ -98,6 +98,42 @@ Human involvement is limited to **goal specification and policy envelope definit
 - Policy tuning
 - Benchmark evaluation
 
+##### Learning Plane — Game Evolution
+
+To support autonomous game-world evolution in the Games domain, the Learning Plane adds a dedicated closed-loop pipeline that links `ReflectionRecord` diagnostics, `AutonomousChangeSet` packaging, and `Testing and Acceptance` gate outcomes.
+
+**Telemetry Inputs**
+- Player progression funnels
+- Quest abandonment rates and dropout loci
+- Combat death distributions
+- Economy inflation and sink/source imbalance
+- Server performance saturation signals
+
+**Mutation Targets**
+- NPC behavior policies
+- Spawn rates and encounter density curves
+- Quest tuning parameters (difficulty/reward pacing)
+- Economy coefficients (drop rates, sink multipliers, pricing)
+- Map event frequency schedules
+
+**Validation Stages**
+1. Offline simulation against historical and synthetic cohorts
+2. Canary shard rollout with bounded blast radius
+3. Explicit rollback criteria tied to stability and fairness regressions
+4. Progression integrity checks to prevent invalid advancement states
+
+**Immutable Constraints**
+- Never delete or invalidate active player inventory or active quests
+- Preserve save compatibility schema across all world mutations
+
+**Approval Mode**
+- Fully autonomous approval is allowed only for low-risk parameter changes
+- High-risk structural world changes must pass a policy simulation gate before promotion
+
+**Rollback Artifacts and Recovery SLA**
+- Every world rebuild attempt must emit rollback artifacts: state diff manifests, migration journals, and replay checkpoints
+- Failed rebuilds must satisfy recovery SLA targets with deterministic restore workflows and auditable incident records
+
 #### Security Plane (Python + Native Cloud)
 - Threat detection (GuardDuty, WAF, audit logs)
 - Incident graph construction
