@@ -112,6 +112,43 @@ Human involvement is limited to **goal specification and policy envelope definit
 - pgvector (long-term memory embeddings)
 - Kinesis (event streaming)
 
+### 4.2 Games Runtime Architecture (Open-World MVP)
+
+#### Runtime Stack and Deployment
+- **Engine/runtime strategy**: Unreal Engine 5 client + authoritative simulation services on Runtime Plane.
+- **Execution model**:
+  - Client: rendering, input, prediction, local animation.
+  - Server: authoritative world state, combat resolution, quest progression, economy writes.
+- **Service boundaries**:
+  - World State Service (authoritative sector state)
+  - Quest Service (quest graph, progression rules, reward commits)
+  - NPC Director Service (behavior policy execution and faction orchestration)
+  - Economy Service (prices, drops, sinks/sources, anti-inflation controls)
+
+#### World Partitioning and Streaming
+- World is partitioned into fixed-size sectors with hierarchical LOD tiles.
+- Sector activation is driven by player position + activity heatmap; nearby sectors are preloaded.
+- Cold sectors are snapshotted and unloaded using deterministic serialization.
+- Cross-sector events are handled via event bus with idempotent replay protection.
+
+#### Core Simulation Model (MVP Vertical Slice)
+- **Biome**: one forest frontier biome with dynamic weather and day/night cycles.
+- **Settlement**: one town with merchants, guards, and faction influence.
+- **Questline**: one multi-step chain with branching outcomes and persistent consequences.
+- **Faction AI**: one adaptive faction with policy-driven patrol, threat response, and territory pressure.
+- **Combat/interaction loop**: exploration → encounter → combat → loot/economy → quest progression.
+
+#### Persistence and Recovery Model
+- Authoritative state is server-owned and persisted in Aurora.
+- Player-critical data (inventory, active quests, currency, skill progression) is append-log backed.
+- Sector snapshots are versioned; replay journal is retained for deterministic recovery.
+- Save compatibility contract requires migration adapters for all schema changes.
+
+#### Networking and Session Model
+- Hybrid model: single-player and co-op sessions both run against cloud authoritative services.
+- Session host acts as relay only; no trust is placed in client state mutations.
+- Reconnect flow supports seamless session recovery within RPO target.
+
 ---
 
 ## 5. Multi-Region Deployment
@@ -209,6 +246,41 @@ Plan → Execute → Observe → Reflect → Patch Memory/Policy → Re-plan
 - Updates applied only after benchmark validation
 - Progressive rollout with automatic rollback
 
+### 7.4 Game Self-Improvement and Autonomous Rebuild Loop
+
+#### Telemetry Inputs for World Adaptation
+- Player progression funnels (tutorial completion, first quest completion, mid-game drop-off)
+- Quest abandonment and retry rates by node
+- Combat metrics (time-to-kill, death hotspots, class/build underperformance)
+- Economy health (currency inflation, sink/source imbalance, item rarity saturation)
+- Runtime reliability (sector load failures, simulation divergence, server tick instability)
+
+#### Mutation Surface (What AI Can Change)
+- NPC behavior policy weights and decision thresholds
+- Spawn tables, encounter pacing, and event frequencies
+- Quest parameterization (timers, objective counts, reward coefficients)
+- Economy coefficients (vendor prices, drop rates, repair costs, sink intensity)
+- Dynamic world pressure variables (faction aggression, patrol density, territory contention)
+
+#### Autonomous Validation and Promotion Pipeline
+1. Generate `AutonomousChangeSet` candidates from clustered failures and game KPIs.
+2. Replay recent traces in offline simulation harness.
+3. Run benchmark suite: progression integrity, economy stability, and server performance.
+4. Deploy to canary shard with bounded player cohort.
+5. Compare canary KPIs and incident rates to baseline.
+6. Promote globally only if all gates pass; otherwise rollback and record `ReflectionRecord`.
+
+#### Immutable Safety Constraints
+- Never delete or silently alter active player inventory entries.
+- Never invalidate active quest state; only forward-compatible transitions are allowed.
+- Never apply schema-breaking changes without migration + replay verification.
+- Never promote world rebuilds that exceed error-budget, latency, or economy volatility guardrails.
+
+#### Risk-Tiered Autonomy
+- **Tier 0 (fully autonomous)**: low-risk numeric tuning (rates, weights, thresholds).
+- **Tier 1 (policy-simulated)**: quest graph logic changes and faction behavior rewrites.
+- **Tier 2 (restricted window)**: structural world rebuilds (sector topology/content regeneration) only after extended canary soak and deterministic restore test.
+
 ---
 
 ## 8. Autonomous Platform Maintenance
@@ -259,6 +331,9 @@ All actions are gated by machine-enforced policy checks and verified post-execut
 - Reliability and chaos tests
 - Load and cost tests
 - Learning effectiveness tests
+- Game simulation parity tests (client/server divergence)
+- Quest/state migration compatibility tests
+- Economy stress and anti-inflation tests
 
 ### Acceptance Gates
 
@@ -266,6 +341,8 @@ All actions are gated by machine-enforced policy checks and verified post-execut
 - p95 latency < 15s
 - 99.9% availability over 30-day soak
 - Incident containment < 5 minutes
+- 95%+ quest chain completion for MVP slice in controlled playtests
+- Session crash-free rate ≥ 99.5% in canary and production shards
 
 ---
 
@@ -287,20 +364,29 @@ All actions are gated by machine-enforced policy checks and verified post-execut
 
 ### Days 31–45
 - Social and Dev domain packs
+- Open-world core loop prototype (movement, interaction, combat)
+- World sector loader and persistence baseline
 - End-to-end workflows
 
 ### Days 46–60
 - Games domain pack
+- Procedural biome generation pipeline
+- Quest generation and progression state machine
+- NPC Director policies and faction control loops
 - Memory system
 - Reflection and failure clustering
 
 ### Days 61–75
 - Autonomous AIOps and SecOps
 - Direct infrastructure apply control loops
+- Game tuning loop in shadow mode (economy/combat/quest balancing)
+- Canary shard automation with automatic rollback hooks
 
 ### Days 76–90
 - Scale tuning to 10,000+ sessions
 - Chaos, security, and load testing
+- Playable open-world MVP demo rollout
+- Autonomous world-rebuild drill with deterministic recovery verification
 - Progressive rollout to production traffic
 
 ---
