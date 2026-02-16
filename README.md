@@ -7,6 +7,8 @@ This repository includes an executable prototype that turns the 90-day plan into
 - Agent kernel loop implementing Plan → Execute → Observe → Reflect → Patch Memory/Policy → Re-plan
 - Learning engine for reflection clustering and memory compaction
 - In-memory control/runtime service with JSON snapshot persistence
+- Runtime metrics and cost ledger tracking
+- Synthetic benchmark runner for success-rate and latency checks
 - HTTP API surface aligned to the plan endpoints
 
 ## Run API server
@@ -22,6 +24,7 @@ python server.py
 - `POST /v1/agents`
 - `GET /v1/agents/{agent_id}`
 - `POST /v1/agents/{agent_id}/execute`
+- `POST /v1/agents/{agent_id}/policy`
 - `GET /v1/agents/{agent_id}/memory`
 - `POST /v1/domain/social/projects`
 - `POST /v1/domain/dev/pipelines`
@@ -33,6 +36,8 @@ python server.py
 - `GET /v1/changes`
 - `GET /v1/learning/summary`
 - `POST /v1/learning/compact?agent_id=...&max_items=...`
+- `GET /v1/metrics`
+- `POST /v1/benchmark/run`
 - `GET /healthz`
 
 ## Run tests

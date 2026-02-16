@@ -48,6 +48,7 @@ class AegisWorldService:
         self.reflections: List[Dict[str, Any]] = []
         self.incidents: List[SecurityIncident] = []
         self.changes: List[AutonomousChangeSet] = []
+        self.cost_ledger: Dict[str, float] = {}
 
         self._load_state()
 
@@ -75,6 +76,7 @@ class AegisWorldService:
         with self.lock:
             agent = Agent(agent_id=new_id("agent"), name=payload.get("name", "default-agent"))
             self.agents[agent.agent_id] = agent
+            self.cost_ledger.setdefault(agent.agent_id, 0.0)
             self._save_state()
             return {"agent_id": agent.agent_id, "name": agent.name}
 
@@ -86,6 +88,7 @@ class AegisWorldService:
             return {
                 "agent_id": agent.agent_id,
                 "name": agent.name,
+                "cost_spend": self.cost_ledger.get(agent.agent_id, 0.0),
                 "policy": {
                     "tool_allowances": agent.policy.tool_allowances,
                     "resource_limits": agent.policy.resource_limits,
@@ -94,6 +97,20 @@ class AegisWorldService:
                     "rollback_policy": agent.policy.rollback_policy,
                 },
             }
+
+    def update_agent_policy(self, agent_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        with self.lock:
+            agent = self.agents[agent_id]
+            updated = ExecutionPolicy(
+                tool_allowances=payload.get("tool_allowances", agent.policy.tool_allowances),
+                resource_limits=payload.get("resource_limits", agent.policy.resource_limits),
+                network_scope=payload.get("network_scope", agent.policy.network_scope),
+                data_scope=payload.get("data_scope", agent.policy.data_scope),
+                rollback_policy=payload.get("rollback_policy", agent.policy.rollback_policy),
+            )
+            agent.policy = updated
+            self._save_state()
+            return self.get_agent(agent_id) or {}
 
     def execute(self, agent_id: str, goal_id: str) -> Dict[str, Any]:
         with self.lock:
@@ -113,6 +130,8 @@ class AegisWorldService:
                 self.reflections.append(reflection_dict)
                 self._propose_change(reflection_dict)
 
+            self._update_costs(agent.agent_id, trace)
+
             if trace.outcome.startswith("blocked:"):
                 incident = SecurityIncident(
                     incident_id=new_id("inc"),
@@ -129,6 +148,11 @@ class AegisWorldService:
                 "trace": trace.to_dict(),
                 "reflection": reflection.to_dict() if reflection else None,
             }
+
+    def _update_costs(self, agent_id: str, trace: Any) -> None:
+        token_cost = float(getattr(trace, "token_cost", 0))
+        estimated_dollars = token_cost * 0.00001
+        self.cost_ledger[agent_id] = self.cost_ledger.get(agent_id, 0.0) + estimated_dollars
 
     def get_memory(self, agent_id: str) -> Dict[str, Any]:
         with self.lock:
@@ -198,6 +222,23 @@ class AegisWorldService:
             self._save_state()
             return {"agent_id": agent_id, "semantic_before": before, "semantic_after": after}
 
+    def metrics(self) -> Dict[str, Any]:
+        with self.lock:
+            total_runs = len(self.traces)
+            success_runs = len([t for t in self.traces if t.get("outcome") == "success"])
+            success_rate = (success_runs / total_runs) if total_runs else 0.0
+            total_estimated_cost = sum(self.cost_ledger.values())
+            return {
+                "goals": len(self.goals),
+                "agents": len(self.agents),
+                "traces": total_runs,
+                "success_rate": success_rate,
+                "incidents": len(self.incidents),
+                "reflections": len(self.reflections),
+                "changes": len(self.changes),
+                "estimated_cost_usd": round(total_estimated_cost, 6),
+            }
+
     def _propose_change(self, reflection: Dict[str, Any]) -> None:
         patch = reflection.get("policy_patch") or {}
         change = AutonomousChangeSet(
@@ -238,6 +279,7 @@ class AegisWorldService:
             "reflections": self.reflections,
             "incidents": [i.to_dict() for i in self.incidents],
             "changes": [c.to_dict() for c in self.changes],
+            "cost_ledger": self.cost_ledger,
         }
         self.state_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
@@ -267,3 +309,4 @@ class AegisWorldService:
         self.reflections = data.get("reflections", [])
         self.incidents = [SecurityIncident(**i) for i in data.get("incidents", [])]
         self.changes = [AutonomousChangeSet(**c) for c in data.get("changes", [])]
+        self.cost_ledger = data.get("cost_ledger", {})

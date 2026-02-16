@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from aegisworld_benchmark import BenchmarkRunner
 from aegisworld_policy import PolicyEngine
 from aegisworld_runtime import AgentKernel, AgentMemory
 from aegisworld_models import ExecutionPolicy, GoalSpec
@@ -77,3 +78,35 @@ def test_state_persistence_roundtrip(tmp_path: Path) -> None:
     assert len(reloaded.agents) == 1
     assert len(reloaded.goals) == 1
     assert len(reloaded.list_traces()) == 1
+
+
+def test_policy_update_and_metrics(tmp_path: Path) -> None:
+    service = AegisWorldService(state_file=str(tmp_path / "metrics.json"))
+    agent = service.create_agent({"name": "policy-agent"})
+
+    updated = service.update_agent_policy(
+        agent["agent_id"],
+        {
+            "tool_allowances": ["planner"],
+            "resource_limits": {"max_budget": 1.0, "max_latency_ms": 200},
+        },
+    )
+
+    assert updated["policy"]["tool_allowances"] == ["planner"]
+
+    goal = service.create_goal({"intent": "Blocked run", "domains": ["dev"]})
+    result = service.execute(agent["agent_id"], goal["goal_id"])
+    assert result["trace"]["outcome"].startswith("blocked:")
+
+    metrics = service.metrics()
+    assert metrics["traces"] == 1
+    assert metrics["incidents"] == 1
+
+
+def test_benchmark_runner(tmp_path: Path) -> None:
+    service = AegisWorldService(state_file=str(tmp_path / "benchmark.json"))
+    result = BenchmarkRunner(service).run(runs=3, domain="dev")
+
+    assert result.total_runs == 3
+    assert 0.0 <= result.success_rate <= 1.0
+    assert result.p95_latency_ms >= 0.0

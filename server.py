@@ -6,6 +6,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict
 from urllib.parse import parse_qs, urlparse
 
+from aegisworld_benchmark import BenchmarkRunner
 from aegisworld_service import AegisWorldService
 
 
@@ -45,6 +46,10 @@ class AegisWorldHandler(BaseHTTPRequestHandler):
                 goal_id = payload["goal_id"]
                 self._send(HTTPStatus.OK, service.execute(agent_id=agent_id, goal_id=goal_id))
                 return
+            if path.startswith("/v1/agents/") and path.endswith("/policy"):
+                agent_id = path.split("/")[3]
+                self._send(HTTPStatus.OK, service.update_agent_policy(agent_id=agent_id, payload=payload))
+                return
             if path == "/v1/domain/social/projects":
                 self._send(HTTPStatus.CREATED, service.create_domain_project("social", payload))
                 return
@@ -66,6 +71,12 @@ class AegisWorldHandler(BaseHTTPRequestHandler):
                     return
                 max_items = int(payload.get("max_items", params.get("max_items", [100])[0]))
                 self._send(HTTPStatus.OK, service.compact_memory(agent_id=agent_id, max_items=max_items))
+                return
+            if path == "/v1/benchmark/run":
+                runs = int(payload.get("runs", 10))
+                domain = payload.get("domain", "dev")
+                result = BenchmarkRunner(service).run(runs=runs, domain=domain)
+                self._send(HTTPStatus.OK, result.to_dict())
                 return
         except KeyError as exc:
             self._send(HTTPStatus.BAD_REQUEST, {"error": f"missing field: {exc}"})
@@ -128,6 +139,10 @@ class AegisWorldHandler(BaseHTTPRequestHandler):
 
         if path == "/v1/learning/summary":
             self._send(HTTPStatus.OK, service.learning_summary())
+            return
+
+        if path == "/v1/metrics":
+            self._send(HTTPStatus.OK, service.metrics())
             return
 
         self._send(HTTPStatus.NOT_FOUND, {"error": "not found"})
