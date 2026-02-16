@@ -266,6 +266,9 @@ All actions are gated by machine-enforced policy checks and verified post-execut
 - p95 latency < 15s
 - 99.9% availability over 30-day soak
 - Incident containment < 5 minutes
+- Median gameplay session length ≥ 20 minutes in pilot cohort
+- Quest completion rate ≥ 65% for primary questline
+- NPC behavior stability ≥ 95% (no deadlock/reset intervention events per 1,000 NPC-hours)
 
 ---
 
@@ -286,22 +289,26 @@ All actions are gated by machine-enforced policy checks and verified post-execut
 - Tool SDK
 
 ### Days 31–45
-- Social and Dev domain packs
-- End-to-end workflows
+- Game core loop prototype (movement, combat, interaction)
+- World chunk loader
+- Persistence baseline for player/world state
 
 ### Days 46–60
-- Games domain pack
-- Memory system
-- Reflection and failure clustering
+- Procedural biome generation
+- Quest generation pipeline
+- NPC behavior trees/policy runtime
 
 ### Days 61–75
-- Autonomous AIOps and SecOps
-- Direct infrastructure apply control loops
+- Autonomous tuning loop for economy/combat/quest balancing
+- Shadow-mode evaluation against live player simulations
+- Memory and reflection signals integrated into tuning policies
 
 ### Days 76–90
-- Scale tuning to 10,000+ sessions
-- Chaos, security, and load testing
-- Progressive rollout to production traffic
+- Playable open-world demo
+- Crash-free session target ≥ 99.5%
+- Retention proxy metric (D1 return-intent or equivalent) ≥ 35%
+- Automated rebuild drill (full environment + game state recovery)
+- Chaos, security, load, and gameplay quality validation
 
 ---
 
