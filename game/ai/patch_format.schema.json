@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Game AI Behavior Policy Patch",
+  "type": "object",
+  "required": ["patch_id", "version_hint", "target", "deltas"],
+  "additionalProperties": false,
+  "properties": {
+    "patch_id": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9._-]+$"
+    },
+    "version_hint": {
+      "type": "string"
+    },
+    "target": {
+      "type": "string",
+      "enum": ["npc_behavior", "quest_policy", "economy_tuning", "combat_policy"]
+    },
+    "deltas": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["path", "op", "value"],
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "type": "string",
+            "pattern": "^(/[a-zA-Z0-9_-]+)+$"
+          },
+          "op": {
+            "type": "string",
+            "enum": ["set", "increase", "decrease"]
+          },
+          "value": {
+            "type": ["number", "string", "boolean"]
+          }
+        }
+      }
+    },
+    "constraints": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_frame_time_ms_p95": {"type": "number"},
+        "allow_new_tools": {"const": false},
+        "allow_code_mutation": {"const": false}
+      }
+    }
+  }
+}
