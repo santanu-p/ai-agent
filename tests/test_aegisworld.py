@@ -1,3 +1,8 @@
+import json
+import threading
+from http import HTTPStatus
+from http.client import HTTPConnection
+from http.server import ThreadingHTTPServer
 from pathlib import Path
 
 from aegisworld_benchmark import BenchmarkRunner
@@ -5,6 +10,7 @@ from aegisworld_policy import PolicyEngine
 from aegisworld_runtime import AgentKernel, AgentMemory
 from aegisworld_models import ExecutionPolicy, GoalSpec
 from aegisworld_service import AegisWorldService
+from server import AegisWorldHandler
 
 
 def test_policy_blocks_unapproved_tool() -> None:
@@ -110,3 +116,26 @@ def test_benchmark_runner(tmp_path: Path) -> None:
     assert result.total_runs == 3
     assert 0.0 <= result.success_rate <= 1.0
     assert result.p95_latency_ms >= 0.0
+
+
+def test_server_returns_400_for_invalid_json_payload() -> None:
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), AegisWorldHandler)
+    thread = threading.Thread(target=httpd.handle_request)
+    thread.start()
+
+    host, port = httpd.server_address
+    conn = HTTPConnection(host, port, timeout=2)
+    conn.request(
+        "POST",
+        "/v1/goals",
+        body='{"intent": "truncated"',
+        headers={"Content-Type": "application/json"},
+    )
+    response = conn.getresponse()
+    body = json.loads(response.read().decode("utf-8"))
+
+    thread.join(timeout=2)
+    httpd.server_close()
+
+    assert response.status == HTTPStatus.BAD_REQUEST
+    assert body == {"error": "invalid json payload"}
