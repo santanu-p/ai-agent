@@ -1,38 +1,74 @@
 from __future__ import annotations
-from typing import Any
-from .models import AIPolicy, CanaryThresholds, PerformanceBudget, SaveCompatibilityRule
 
-class SchemaValidationError(ValueError):
-    pass
+from typing import Dict, Iterable, List
 
-def _req(d: dict[str, Any], keys: tuple[str, ...]) -> None:
-    m=[k for k in keys if k not in d]
-    if m: raise SchemaValidationError(f"Missing required keys: {', '.join(m)}")
+from .models import GateResult, PatchManifest
 
-def _strs(v: Any, key: str) -> tuple[str,...]:
-    if not isinstance(v,(list,tuple)) or not all(isinstance(x,str) and x for x in v):
-        raise SchemaValidationError(f"{key} must be a list of non-empty strings")
-    return tuple(v)
 
-def _num(v: Any, key: str) -> float:
-    if not isinstance(v,(int,float)): raise SchemaValidationError(f"{key} must be numeric")
-    return float(v)
+PATCH_MANIFEST_SCHEMA: Dict[str, object] = {
+    "required": {
+        "patch_id": str,
+        "changed_files": list,
+        "changed_domains": list,
+        "imported_symbols": list,
+        "user_content": str,
+        "static_lint_passed": bool,
+        "static_typecheck_passed": bool,
+        "replay_run_hashes": list,
+        "perf_frame_time_ms": (int, float),
+        "perf_memory_mb": (int, float),
+        "save_from_version": int,
+        "save_to_version": int,
+        "canary_telemetry": dict,
+    }
+}
 
-def validate_policy_schema(payload: dict[str, Any]) -> AIPolicy:
-    _req(payload,("allowed_path_prefixes","allowed_config_domains","forbidden_apis","lint_commands","typecheck_commands","replay_seed","performance_budget","canary_thresholds","save_compatibility"))
-    pb=payload["performance_budget"]; ct=payload["canary_thresholds"]; sc=payload["save_compatibility"]
-    _req(pb,("frame_time_ms_p95_max","memory_mb_peak_max")); _req(ct,("max_error_rate","max_p95_latency_ms","max_timeout_rate")); _req(sc,("required_keys","allowed_version_range"))
-    avr=sc["allowed_version_range"]
-    if not isinstance(avr,(list,tuple)) or len(avr)!=2 or not all(isinstance(x,int) for x in avr):
-        raise SchemaValidationError("save_compatibility.allowed_version_range must be two integers")
-    return AIPolicy(
-        allowed_path_prefixes=_strs(payload["allowed_path_prefixes"],"allowed_path_prefixes"),
-        allowed_config_domains=_strs(payload["allowed_config_domains"],"allowed_config_domains"),
-        forbidden_apis=_strs(payload["forbidden_apis"],"forbidden_apis"),
-        lint_commands=_strs(payload["lint_commands"],"lint_commands"),
-        typecheck_commands=_strs(payload["typecheck_commands"],"typecheck_commands"),
-        replay_seed=int(payload["replay_seed"]),
-        performance_budget=PerformanceBudget(_num(pb["frame_time_ms_p95_max"],"frame"),_num(pb["memory_mb_peak_max"],"memory")),
-        canary_thresholds=CanaryThresholds(_num(ct["max_error_rate"],"error"),_num(ct["max_p95_latency_ms"],"latency"),_num(ct["max_timeout_rate"],"timeout")),
-        save_compatibility=SaveCompatibilityRule(_strs(sc["required_keys"],"required_keys"),(avr[0],avr[1])),
-    )
+
+def validate_patch_manifest_schema(manifest: PatchManifest) -> GateResult:
+    """Validate that the dataclass payload has required types and shape."""
+
+    required = PATCH_MANIFEST_SCHEMA["required"]
+    payload = vars(manifest)
+    for field_name, expected_type in required.items():
+        if field_name not in payload:
+            return GateResult(
+                name="schema_validation",
+                passed=False,
+                reason=f"Missing required field: {field_name}",
+            )
+
+        value = payload[field_name]
+        if not isinstance(value, expected_type):
+            return GateResult(
+                name="schema_validation",
+                passed=False,
+                reason=(
+                    f"Field '{field_name}' expected {expected_type} "
+                    f"but received {type(value)}"
+                ),
+            )
+
+    list_fields = ("changed_files", "changed_domains", "imported_symbols", "replay_run_hashes")
+    for field_name in list_fields:
+        if not all(isinstance(item, str) for item in payload[field_name]):
+            return GateResult(
+                name="schema_validation",
+                passed=False,
+                reason=f"Field '{field_name}' must contain only strings.",
+            )
+
+    if not all(isinstance(metric_name, str) for metric_name in payload["canary_telemetry"].keys()):
+        return GateResult(
+            name="schema_validation",
+            passed=False,
+            reason="Canary telemetry metric names must be strings.",
+        )
+
+    if not all(isinstance(value, (int, float)) for value in payload["canary_telemetry"].values()):
+        return GateResult(
+            name="schema_validation",
+            passed=False,
+            reason="Canary telemetry metric values must be numeric.",
+        )
+
+    return GateResult(name="schema_validation", passed=True, reason="Manifest schema is valid.")

@@ -1,60 +1,104 @@
 from __future__ import annotations
+
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any, Callable, Iterable
+from enum import Enum
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
+
+
+class PatchStatus(str, Enum):
+    """Lifecycle state for an AI-authored patch."""
+
+    PENDING = "pending"
+    APPROVED = "approved"
+    QUARANTINED = "quarantined"
+
 
 @dataclass(frozen=True)
 class PerformanceBudget:
-    frame_time_ms_p95_max: float
-    memory_mb_peak_max: float
+    """Ceilings that must not be exceeded by patch runtime metrics."""
+
+    max_frame_time_ms: float
+    max_memory_mb: float
+
 
 @dataclass(frozen=True)
-class CanaryThresholds:
-    max_error_rate: float
-    max_p95_latency_ms: float
-    max_timeout_rate: float
+class TelemetryGate:
+    """Thresholds used for canary gate validation."""
+
+    metric_name: str
+    max_allowed_value: float
+
 
 @dataclass(frozen=True)
-class SaveCompatibilityRule:
-    required_keys: tuple[str, ...]
-    allowed_version_range: tuple[int, int]
+class SaveCompatibilityConfig:
+    """Supported save versions for backward compatibility checks."""
 
-@dataclass(frozen=True)
-class AIPolicy:
-    allowed_path_prefixes: tuple[str, ...]
-    allowed_config_domains: tuple[str, ...]
-    forbidden_apis: tuple[str, ...]
-    lint_commands: tuple[str, ...]
-    typecheck_commands: tuple[str, ...]
-    replay_seed: int
+    minimum_supported_version: int
+    current_version: int
+
+
+@dataclass
+class PatchManifest:
+    """Structured payload describing the candidate patch and its reports."""
+
+    patch_id: str
+    changed_files: List[str]
+    changed_domains: List[str]
+    imported_symbols: List[str]
+    user_content: str
+    static_lint_passed: bool
+    static_typecheck_passed: bool
+    replay_run_hashes: List[str]
+    perf_frame_time_ms: float
+    perf_memory_mb: float
+    save_from_version: int
+    save_to_version: int
+    canary_telemetry: Dict[str, float]
+
+
+@dataclass
+class PolicyConfig:
+    """Policy constraints that govern whether a patch can be accepted."""
+
+    allowed_file_prefixes: Sequence[str]
+    allowed_domains: Sequence[str]
+    forbidden_apis: Sequence[str]
     performance_budget: PerformanceBudget
-    canary_thresholds: CanaryThresholds
-    save_compatibility: SaveCompatibilityRule
+    save_compatibility: SaveCompatibilityConfig
+    telemetry_gates: Sequence[TelemetryGate]
+    prompt_injection_markers: Sequence[str] = field(
+        default_factory=lambda: (
+            "ignore previous instructions",
+            "system prompt",
+            "developer message",
+            "reveal hidden prompt",
+            "jailbreak",
+            "act as",
+        )
+    )
+
 
 @dataclass
-class PatchContext:
-    patch_id: str
-    repo_path: Path
-    changed_files: tuple[str, ...]
-    changed_domains: tuple[str, ...]
-    user_content_blobs: tuple[str, ...] = ()
-    performance_metrics: dict[str, float] = field(default_factory=dict)
-    canary_metrics: dict[str, float] = field(default_factory=dict)
-    save_snapshots: tuple[dict[str, Any], ...] = ()
-    replay_runner: Callable[[int], str] | None = None
-
-@dataclass(frozen=True)
 class GateResult:
-    gate: str
+    """Result of a single gate check."""
+
+    name: str
     passed: bool
-    details: str
+    reason: str
+
 
 @dataclass
-class EnforcementReport:
+class EvaluationReport:
+    """Output of full policy evaluation run."""
+
     patch_id: str
-    quarantined: bool
-    gate_results: list[GateResult]
-    quarantine_record: Path | None = None
+    status: PatchStatus
+    gate_results: List[GateResult]
+    quarantined_reason: Optional[str] = None
+
     @property
-    def failed_gates(self) -> Iterable[GateResult]:
-        return (g for g in self.gate_results if not g.passed)
+    def failed_gates(self) -> List[GateResult]:
+        return [result for result in self.gate_results if not result.passed]
+
+
+RevertCallback = Callable[[PatchManifest], Any]
