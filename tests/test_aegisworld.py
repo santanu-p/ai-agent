@@ -1,9 +1,11 @@
 from pathlib import Path
+from http import HTTPStatus
 
 from aegisworld_policy import PolicyEngine
 from aegisworld_runtime import AgentKernel, AgentMemory
 from aegisworld_models import ExecutionPolicy, GoalSpec
 from aegisworld_service import AegisWorldService
+from server import AegisWorldHandler
 
 
 def test_policy_blocks_unapproved_tool() -> None:
@@ -114,3 +116,35 @@ def test_policy_update_can_cause_blocked_execution(tmp_path: Path) -> None:
     assert response["goal_status"] == "blocked"
     assert response["trace"]["outcome"].startswith("blocked:")
     assert service.list_incidents()
+
+
+def test_policy_update_merges_resource_limits(tmp_path: Path) -> None:
+    service = AegisWorldService(state_file=str(tmp_path / "state.json"))
+    agent = service.create_agent({"name": "merge-agent"})
+
+    updated = service.update_agent_policy(
+        agent["agent_id"],
+        {
+            "resource_limits": {"max_budget": 2.0},
+        },
+    )
+
+    assert updated["policy"]["resource_limits"]["max_budget"] == 2.0
+    assert updated["policy"]["resource_limits"]["max_latency_ms"] == 5000
+
+
+def test_post_malformed_json_returns_bad_request() -> None:
+    handler = AegisWorldHandler.__new__(AegisWorldHandler)
+    responses: list[tuple[HTTPStatus, dict]] = []
+
+    def fake_send(status: HTTPStatus, payload: dict) -> None:
+        responses.append((status, payload))
+
+    handler._send = fake_send  # type: ignore[method-assign]
+    handler.path = "/v1/goals"
+    handler.headers = {"Content-Length": "1"}
+    handler.rfile = type("R", (), {"read": lambda self, _n: b"{"})()
+
+    AegisWorldHandler.do_POST(handler)
+
+    assert responses == [(HTTPStatus.BAD_REQUEST, {"error": "malformed JSON payload"})]
