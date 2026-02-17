@@ -1,62 +1,110 @@
+"""Autonomous AI tuning loop: Observe -> Evaluate -> ProposePatch -> Validate -> Deploy."""
+
 from __future__ import annotations
 
-from datetime import datetime
-from typing import Callable, Sequence
+from dataclasses import dataclass, field
 
-from .deployer import PatchDeployer
-from .metrics import KPICalculator
-from .types import Observation, PatchProposal
-from .validator import PatchValidator
+from .metrics import KPIReadings
+from .patch_format import AIPatch
+from .validator import PatchValidator, RuntimeStats, SimulationResult
 
 
-class AutonomousGameAILoop:
-    """Observe -> Evaluate -> ProposePatch -> Validate -> Deploy."""
+@dataclass
+class PatchVersion:
+    version: int
+    patch: AIPatch
+    kpis: KPIReadings
+    status: str
 
-    def __init__(
+
+@dataclass
+class DeploymentLedger:
+    versions: list[PatchVersion] = field(default_factory=list)
+
+    @property
+    def active(self) -> PatchVersion | None:
+        for version in reversed(self.versions):
+            if version.status == "active":
+                return version
+        return None
+
+    def add_active(self, patch: AIPatch, kpis: KPIReadings) -> PatchVersion:
+        next_version = (self.versions[-1].version + 1) if self.versions else 1
+        if self.active:
+            self.active.status = "superseded"
+        entry = PatchVersion(version=next_version, patch=patch, kpis=kpis, status="active")
+        self.versions.append(entry)
+        return entry
+
+    def rollback(self, reason: str) -> PatchVersion | None:
+        current = self.active
+        if not current:
+            return None
+        current.status = f"rolled_back:{reason}"
+
+        for version in reversed(self.versions):
+            if version.status == "superseded":
+                version.status = "active"
+                return version
+        return None
+
+
+class AdaptiveAILoop:
+    def __init__(self, validator: PatchValidator, ledger: DeploymentLedger | None = None) -> None:
+        self.validator = validator
+        self.ledger = ledger or DeploymentLedger()
+
+    def run_cycle(
         self,
-        propose_patch: Callable[[Observation], dict],
-        validator: PatchValidator | None = None,
-        deployer: PatchDeployer | None = None,
-        metrics: KPICalculator | None = None,
-    ) -> None:
-        self.propose_patch = propose_patch
-        self.metrics = metrics or KPICalculator()
-        self.validator = validator or PatchValidator(kpi_calculator=self.metrics)
-        self.deployer = deployer or PatchDeployer(kpi_calculator=self.metrics)
+        observed_baseline: KPIReadings,
+        proposed_patch: AIPatch,
+        evaluated_candidate: KPIReadings,
+        simulation_results: list[SimulationResult],
+        runtime_stats: RuntimeStats,
+    ) -> tuple[bool, str]:
+        # Observe
+        baseline = observed_baseline
 
-    def run_cycle(self, observation: Observation, baseline_window: Sequence[Observation]) -> dict:
-        # 1) Observe
-        observed = observation
+        # Evaluate
+        candidate = evaluated_candidate
 
-        # 2) Evaluate
-        kpi_report = self.metrics.evaluate(observed, baseline_window)
+        # ProposePatch
+        patch = proposed_patch
 
-        # 3) ProposePatch
-        proposed_payload = self.propose_patch(observed)
-        patch = PatchProposal(
-            patch_id=proposed_payload.get("patch_id", f"patch-{observed.run_id}"),
-            version_hint=proposed_payload.get("version_hint", "auto"),
-            patch_payload=proposed_payload,
-            authored_at=datetime.utcnow(),
+        # Validate
+        report = self.validator.validate(
+            patch=patch,
+            baseline_kpis=baseline,
+            candidate_kpis=candidate,
+            sim_results=simulation_results,
+            runtime_stats=runtime_stats,
         )
+        if not report.passed:
+            return False, "Validation failed: " + "; ".join(report.reasons)
 
-        # 4) Validate
-        validation = self.validator.validate_all(patch, observed, kpi_report)
-        if not validation.passed:
-            return {
-                "status": "validation_failed",
-                "reasons": validation.reasons,
-                "kpi_report": kpi_report,
-            }
+        # Deploy
+        self.ledger.add_active(patch=patch, kpis=candidate)
+        return True, f"Patch {patch.patch_id} deployed"
 
-        # 5) Deploy
-        deployed = self.deployer.deploy(patch, kpi_report)
+    def monitor_and_rollback(
+        self,
+        post_deploy_kpis: KPIReadings,
+        max_allowed_regression_ratio: float | None = None,
+    ) -> tuple[bool, str]:
+        active = self.ledger.active
+        if not active:
+            return False, "No active deployment"
 
-        # Post-deploy safety: rollback if KPI regresses.
-        rollback = self.deployer.evaluate_and_maybe_rollback(kpi_report)
-        return {
-            "status": "rolled_back" if rollback and rollback.patch_id.startswith("rollback") else "deployed",
-            "deployment_version": deployed.version,
-            "rollback": rollback.patch_id if rollback else None,
-            "kpi_report": kpi_report,
-        }
+        threshold = (
+            max_allowed_regression_ratio
+            if max_allowed_regression_ratio is not None
+            else self.validator.max_allowed_regression_ratio
+        )
+        regression = post_deploy_kpis.regression_ratio(active.kpis)
+        if regression > threshold:
+            restored = self.ledger.rollback(reason=f"kpi_regression:{regression:.2%}")
+            if restored:
+                return True, f"Auto-reverted to version {restored.version}"
+            return True, "Deployment rolled back but no prior version available"
+
+        return False, "No rollback required"

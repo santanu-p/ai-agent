@@ -1,93 +1,98 @@
+"""Validation gates for simulation, performance, and safety."""
+
 from __future__ import annotations
 
-import json
-from pathlib import Path
-from typing import Any, Dict
+from dataclasses import dataclass
+from typing import Iterable
 
-from .metrics import KPICalculator
-from .types import KPIReport, Observation, PatchProposal, ValidationResult
+from .metrics import KPIReadings, KPIThresholds
+from .patch_format import AIPatch
+
+
+@dataclass(frozen=True)
+class ValidationReport:
+    passed: bool
+    reasons: list[str]
+
+
+@dataclass(frozen=True)
+class PerformanceBudget:
+    max_cpu_ms_per_tick: float = 4.0
+    max_memory_mb: float = 128.0
+
+
+@dataclass(frozen=True)
+class SimulationResult:
+    scenario: str
+    success: bool
+    details: str = ""
+
+
+@dataclass(frozen=True)
+class RuntimeStats:
+    cpu_ms_per_tick: float
+    memory_mb: float
 
 
 class PatchValidator:
-    """Validation gates for simulation, performance, and exploit/safety checks."""
-
-    def __init__(self, schema_path: Path | None = None, kpi_calculator: KPICalculator | None = None) -> None:
-        self.schema_path = schema_path or Path(__file__).with_name("patch_format.schema.json")
-        self.kpi_calculator = kpi_calculator or KPICalculator()
-        self.schema = json.loads(self.schema_path.read_text())
-
-    def validate_patch_shape(self, patch: PatchProposal) -> ValidationResult:
-        payload = patch.patch_payload
-
-        for required in self.schema["required"]:
-            if required not in payload:
-                return ValidationResult(False, [f"missing required field: {required}"])
-
-        if payload.get("target") not in self.schema["properties"]["target"]["enum"]:
-            return ValidationResult(False, ["unsupported patch target"])
-
-        deltas = payload.get("deltas", [])
-        if not isinstance(deltas, list) or not deltas:
-            return ValidationResult(False, ["deltas must be a non-empty list"])
-
-        for idx, delta in enumerate(deltas):
-            if set(delta.keys()) != {"path", "op", "value"}:
-                return ValidationResult(False, [f"delta[{idx}] includes unsupported keys"])
-            if not str(delta["path"]).startswith("/"):
-                return ValidationResult(False, [f"delta[{idx}] path must be json-pointer-like"])
-            if delta["op"] not in {"set", "increase", "decrease"}:
-                return ValidationResult(False, [f"delta[{idx}] op invalid"])
-
-        constraints = payload.get("constraints", {})
-        if constraints.get("allow_new_tools", False):
-            return ValidationResult(False, ["tooling expansion is prohibited in behavior patches"])
-        if constraints.get("allow_code_mutation", False):
-            return ValidationResult(False, ["code mutation is prohibited in behavior patches"])
-
-        return ValidationResult(True)
-
-    def simulation_regression_checks(self, observation: Observation) -> ValidationResult:
-        if observation.simulation_regression_failures > 0:
-            return ValidationResult(False, ["simulation regression failures detected"])
-        return ValidationResult(True)
-
-    def performance_budget_checks(self, observation: Observation, frame_budget_ms_p95: float = 20.0) -> ValidationResult:
-        if observation.frame_time_ms_p95 > frame_budget_ms_p95:
-            return ValidationResult(
-                False,
-                [
-                    f"frame-time budget exceeded: {observation.frame_time_ms_p95:.2f}ms > {frame_budget_ms_p95:.2f}ms"
-                ],
-            )
-        return ValidationResult(True)
-
-    def exploit_safety_checks(self, observation: Observation) -> ValidationResult:
-        if observation.exploit_findings:
-            findings = ", ".join(observation.exploit_findings)
-            return ValidationResult(False, [f"exploit/safety findings present: {findings}"])
-        return ValidationResult(True)
-
-    def kpi_guard_checks(self, report: KPIReport) -> ValidationResult:
-        reasons = []
-        if self.kpi_calculator.below_threshold(report):
-            reasons.append("KPI threshold floor violated")
-        if self.kpi_calculator.regressed(report):
-            reasons.append("KPI regression from baseline")
-        return ValidationResult(not reasons, reasons)
-
-    def validate_all(
+    def __init__(
         self,
-        patch: PatchProposal,
-        observation: Observation,
-        kpi_report: KPIReport,
-    ) -> ValidationResult:
-        checks = [
-            self.validate_patch_shape(patch),
-            self.simulation_regression_checks(observation),
-            self.performance_budget_checks(observation),
-            self.exploit_safety_checks(observation),
-            self.kpi_guard_checks(kpi_report),
-        ]
+        thresholds: KPIThresholds,
+        budget: PerformanceBudget | None = None,
+        max_allowed_regression_ratio: float = 0.05,
+        blocked_targets: Iterable[str] | None = None,
+    ) -> None:
+        self.thresholds = thresholds
+        self.budget = budget or PerformanceBudget()
+        self.max_allowed_regression_ratio = max_allowed_regression_ratio
+        self.blocked_targets = set(blocked_targets or {"economy.drop_table", "auth.permissions"})
 
-        failures = [reason for check in checks if not check.passed for reason in check.reasons]
-        return ValidationResult(passed=not failures, reasons=failures)
+    def validate(
+        self,
+        patch: AIPatch,
+        baseline_kpis: KPIReadings,
+        candidate_kpis: KPIReadings,
+        sim_results: list[SimulationResult],
+        runtime_stats: RuntimeStats,
+    ) -> ValidationReport:
+        reasons: list[str] = []
+
+        # Format and safety gate.
+        try:
+            patch.validate()
+        except ValueError as err:
+            reasons.append(f"patch format check failed: {err}")
+
+        # Simulation regression gate.
+        failed_sims = [s for s in sim_results if not s.success]
+        if failed_sims:
+            reasons.append(
+                "simulation regression checks failed: "
+                + ", ".join(f"{s.scenario}({s.details})" for s in failed_sims)
+            )
+
+        # KPI gate.
+        if not candidate_kpis.meets_thresholds(self.thresholds):
+            reasons.append("candidate KPI values violate minimum thresholds")
+        regression = candidate_kpis.regression_ratio(baseline_kpis)
+        if regression > self.max_allowed_regression_ratio:
+            reasons.append(
+                f"kpi regression ratio {regression:.2%} exceeds cap {self.max_allowed_regression_ratio:.2%}"
+            )
+
+        # Performance gate.
+        if runtime_stats.cpu_ms_per_tick > self.budget.max_cpu_ms_per_tick:
+            reasons.append(
+                f"cpu budget exceeded ({runtime_stats.cpu_ms_per_tick}ms > {self.budget.max_cpu_ms_per_tick}ms)"
+            )
+        if runtime_stats.memory_mb > self.budget.max_memory_mb:
+            reasons.append(
+                f"memory budget exceeded ({runtime_stats.memory_mb}MB > {self.budget.max_memory_mb}MB)"
+            )
+
+        # Exploit/safety gate.
+        blocked = [delta.target for delta in patch.deltas if delta.target in self.blocked_targets]
+        if blocked:
+            reasons.append(f"exploit/safety blocklist hit: {', '.join(sorted(blocked))}")
+
+        return ValidationReport(passed=not reasons, reasons=reasons)
