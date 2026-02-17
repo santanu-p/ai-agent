@@ -38,6 +38,7 @@ class Agent:
     policy: ExecutionPolicy = field(default_factory=default_policy)
     memory: AgentMemory = field(default_factory=AgentMemory)
     spent_budget: float = 0.0
+    goal_spend: Dict[str, float] = field(default_factory=dict)
 
 
 class AegisWorldService:
@@ -94,6 +95,7 @@ class AegisWorldService:
                 "agent_id": agent.agent_id,
                 "name": agent.name,
                 "spent_budget": agent.spent_budget,
+                "goal_spend": dict(agent.goal_spend),
                 "policy": {
                     "tool_allowances": agent.policy.tool_allowances,
                     "resource_limits": agent.policy.resource_limits,
@@ -122,7 +124,8 @@ class AegisWorldService:
             agent = self.agents[agent_id]
             goal = self.goals[goal_id]
 
-            if agent.spent_budget >= goal.budget:
+            goal_spend = float(agent.goal_spend.get(goal.goal_id, 0.0))
+            if goal_spend >= goal.budget:
                 trace = {
                     "trace_id": new_id("trace"),
                     "goal_id": goal.goal_id,
@@ -136,6 +139,24 @@ class AegisWorldService:
                 }
                 self.traces.append(trace)
                 self._raise_incident("budget_guard_triggered", "high", "single_goal")
+                self._save_state()
+                return {"trace": trace, "reflection": None}
+
+            estimated_run_cost = self.kernel.estimate_run_cost(goal)
+            if goal_spend + estimated_run_cost > goal.budget:
+                trace = {
+                    "trace_id": new_id("trace"),
+                    "goal_id": goal.goal_id,
+                    "agent_id": agent.agent_id,
+                    "steps": ["budget_guard_precheck"],
+                    "tool_calls": [],
+                    "model_calls": [],
+                    "latency_ms": 5,
+                    "token_cost": 0,
+                    "outcome": "blocked:goal_budget_precheck",
+                }
+                self.traces.append(trace)
+                self._raise_incident("budget_guard_precheck_triggered", "high", "single_goal")
                 self._save_state()
                 return {"trace": trace, "reflection": None}
 
@@ -167,6 +188,7 @@ class AegisWorldService:
             self.traces.append(trace_dict)
             run_cost = float(trace.token_cost) / 100.0
             agent.spent_budget += run_cost
+            agent.goal_spend[goal.goal_id] = float(agent.goal_spend.get(goal.goal_id, 0.0)) + run_cost
             self.total_spend += run_cost
 
             if reflection:
@@ -307,6 +329,7 @@ class AegisWorldService:
                     "agent_id": a.agent_id,
                     "name": a.name,
                     "spent_budget": a.spent_budget,
+                    "goal_spend": a.goal_spend,
                     "policy": {
                         "tool_allowances": a.policy.tool_allowances,
                         "resource_limits": a.policy.resource_limits,
@@ -355,6 +378,10 @@ class AegisWorldService:
                 policy=policy,
                 memory=memory,
                 spent_budget=float(a.get("spent_budget", 0.0)),
+                goal_spend={
+                    goal_id: float(amount)
+                    for goal_id, amount in (a.get("goal_spend", {}) or {}).items()
+                },
             )
             self.agents[agent.agent_id] = agent
 
