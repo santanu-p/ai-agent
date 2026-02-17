@@ -1,25 +1,19 @@
-"""AI improvement subsystem modules: data, training, evaluation, deployment."""
+"""AI improvement subsystem package."""
 
-from .data_collector import DataCollector, GameEvent
-from .dataset_builder import DatasetBuilder, TrajectorySample
-from .deploy_policy import PolicyDeployer, DeployResult
+from .data_collector import DataCollector
+from .dataset_builder import DatasetBuilder
 from .evaluate_policy import EvaluationThresholds, PolicyEvaluator
-from .policy_registry import PolicyRecord, PolicyRegistry
+from .policy_registry import PolicyRegistry
 from .policy_runtime_adapter import PolicyRuntimeAdapter
 from .train_policy import PolicyTrainer, TrainingConfig
 
 __all__ = [
     "DataCollector",
-    "GameEvent",
     "DatasetBuilder",
-    "TrajectorySample",
+    "EvaluationThresholds",
+    "PolicyEvaluator",
+    "PolicyRegistry",
+    "PolicyRuntimeAdapter",
     "PolicyTrainer",
     "TrainingConfig",
-    "PolicyEvaluator",
-    "EvaluationThresholds",
-    "PolicyRegistry",
-    "PolicyRecord",
-    "PolicyRuntimeAdapter",
-    "PolicyDeployer",
-    "DeployResult",
 ]

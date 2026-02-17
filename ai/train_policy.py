@@ -1,84 +1,93 @@
-"""Periodic policy training orchestration.
-
-Supports a mixed objective:
-- Imitation loss from labels produced by DatasetBuilder.
-- Reinforcement objective from reward proxies.
-"""
+"""Policy training entrypoints for periodic jobs."""
 
 from __future__ import annotations
 
-import json
-import random
-import time
+from collections import Counter, defaultdict
 from dataclasses import dataclass
+from datetime import datetime, timezone
+import json
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping
+from typing import Any, Dict, List
 
 
-@dataclass(frozen=True)
+@dataclass
 class TrainingConfig:
-    policy_family: str = "npc-controller"
-    max_steps: int = 200
+    policy_id: str
+    policy_version: str
+    infra_mode: str = "local"  # local | distributed
     imitation_weight: float = 0.7
     reinforcement_weight: float = 0.3
-    infra_mode: str = "auto"  # auto, local, distributed
 
 
 class PolicyTrainer:
-    """Runs periodic training jobs and exports candidate policies."""
+    """Hybrid trainer that combines imitation and reward-driven adjustment."""
 
-    def __init__(self, config: TrainingConfig | None = None) -> None:
-        self.config = config or TrainingConfig()
+    def __init__(self, config: TrainingConfig) -> None:
+        self.config = config
 
-    def train(self, dataset_path: str | Path, output_dir: str | Path) -> Dict[str, Any]:
-        samples = list(self._read_dataset(Path(dataset_path)))
+    def train(self, dataset_path: str | Path, output_path: str | Path) -> Dict[str, Any]:
+        samples = json.loads(Path(dataset_path).read_text(encoding="utf-8"))
         if not samples:
-            raise ValueError("Dataset is empty; cannot train")
+            raise ValueError("Dataset is empty; cannot train policy")
 
-        infra = self._choose_infra(self.config.infra_mode)
-        imitation_loss = self._imitation_phase(samples)
-        rl_gain = self._reinforcement_phase(samples)
+        imitation = self._imitation_statistics(samples)
+        reinforcement = self._reinforcement_statistics(samples)
 
-        metrics = {
-            "infra": infra,
-            "imitation_loss": imitation_loss,
-            "rl_gain": rl_gain,
-            "combined_score": (1.0 - imitation_loss) * self.config.imitation_weight + rl_gain * self.config.reinforcement_weight,
-            "num_samples": len(samples),
-            "trained_at_ms": int(time.time() * 1000),
+        model = self._blend_objectives(imitation, reinforcement)
+        artifact = {
+            "policy_id": self.config.policy_id,
+            "version": self.config.policy_version,
+            "trained_at": datetime.now(timezone.utc).isoformat(),
+            "infra_mode": self.config.infra_mode,
+            "weights": {
+                "imitation": self.config.imitation_weight,
+                "reinforcement": self.config.reinforcement_weight,
+            },
+            "model": model,
         }
 
-        out_dir = Path(output_dir)
-        out_dir.mkdir(parents=True, exist_ok=True)
-        candidate_path = out_dir / f"candidate_{metrics['trained_at_ms']}.json"
-        with candidate_path.open("w", encoding="utf-8") as fh:
-            json.dump({"config": self.config.__dict__, "metrics": metrics}, fh, indent=2)
+        output = Path(output_path)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(artifact, indent=2), encoding="utf-8")
+        return artifact
 
-        return {"policy_artifact": str(candidate_path), "metrics": metrics}
+    def _imitation_statistics(self, samples: List[Dict[str, Any]]) -> Dict[str, float]:
+        label_counts = Counter(sample["label"] for sample in samples)
+        total = max(1, sum(label_counts.values()))
+        return {label: count / total for label, count in label_counts.items()}
 
-    def _choose_infra(self, mode: str) -> str:
-        if mode == "auto":
-            # Lightweight heuristic placeholder.
-            return "distributed" if self.config.max_steps > 500 else "local"
-        return mode
+    def _reinforcement_statistics(self, samples: List[Dict[str, Any]]) -> Dict[str, float]:
+        reward_sum = defaultdict(float)
+        reward_count = defaultdict(int)
+        for sample in samples:
+            label = sample["label"]
+            reward_sum[label] += float(sample.get("reward", 0.0))
+            reward_count[label] += 1
 
-    def _read_dataset(self, path: Path) -> Iterable[Dict[str, Any]]:
-        with path.open("r", encoding="utf-8") as fh:
-            for line in fh:
-                line = line.strip()
-                if line:
-                    yield json.loads(line)
+        average_reward: Dict[str, float] = {}
+        for label, total in reward_sum.items():
+            average_reward[label] = total / max(1, reward_count[label])
+        return average_reward
 
-    def _imitation_phase(self, samples: List[Mapping[str, Any]]) -> float:
-        labels = [s.get("label", "hold") for s in samples]
-        behavior_diversity = len(set(labels)) / max(len(labels), 1)
-        noise = random.uniform(0.0, 0.08)
-        return max(0.02, 0.8 - behavior_diversity + noise)
+    def _blend_objectives(
+        self,
+        imitation: Dict[str, float],
+        reinforcement: Dict[str, float],
+    ) -> Dict[str, Any]:
+        policy_scores: Dict[str, float] = {}
+        for label in set(imitation) | set(reinforcement):
+            imitation_score = imitation.get(label, 0.0)
+            reward_score = reinforcement.get(label, 0.0)
+            policy_scores[label] = (
+                self.config.imitation_weight * imitation_score
+                + self.config.reinforcement_weight * reward_score
+            )
 
-    def _reinforcement_phase(self, samples: List[Mapping[str, Any]]) -> float:
-        rewards = [float(s.get("reward", 0.0)) for s in samples]
-        if not rewards:
-            return 0.0
-        avg_reward = sum(rewards) / len(rewards)
-        normalized = max(0.0, min(1.0, (avg_reward + 5.0) / 10.0))
-        return normalized
+        ranking = sorted(policy_scores.items(), key=lambda item: item[1], reverse=True)
+        return {
+            "action_scores": policy_scores,
+            "ranked_actions": [label for label, _ in ranking],
+        }
+
+
+__all__ = ["PolicyTrainer", "TrainingConfig"]

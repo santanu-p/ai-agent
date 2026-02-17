@@ -1,126 +1,122 @@
-"""Policy versioning, rollout state, and canary promotion control plane."""
+"""Policy registry for versioning and rollout lifecycle."""
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from datetime import datetime, timezone
 import json
-import time
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional
-
-RolloutStatus = Literal["shadow", "canary", "promoted", "rolled_back"]
+from typing import Any, Dict, List, Optional
 
 
 @dataclass
-class PolicyRecord:
+class PolicyMetadata:
     policy_id: str
-    semver: str
+    version: str
     artifact_path: str
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    rollout_status: RolloutStatus = "shadow"
-    canary_percent: int = 0
-    created_at_ms: int = field(default_factory=lambda: int(time.time() * 1000))
+    metadata: Dict[str, Any]
+    rollout_status: str = "registered"
 
 
 class PolicyRegistry:
-    """Persistent registry for policy lifecycle operations."""
+    """Persistent registry for policy artifacts and rollout states."""
 
     def __init__(self, registry_path: str | Path) -> None:
         self.registry_path = Path(registry_path)
         self.registry_path.parent.mkdir(parents=True, exist_ok=True)
         if not self.registry_path.exists():
-            self._save({"policies": [], "active_policy_id": None, "history": []})
+            self.registry_path.write_text(json.dumps({"policies": []}, indent=2), encoding="utf-8")
 
     def register_policy(
         self,
         policy_id: str,
-        semver: str,
+        version: str,
         artifact_path: str,
-        *,
         metadata: Optional[Dict[str, Any]] = None,
-    ) -> PolicyRecord:
-        state = self._load()
-        record = PolicyRecord(
-            policy_id=policy_id,
-            semver=semver,
-            artifact_path=artifact_path,
-            metadata=metadata or {},
-        )
-        state["policies"].append(record.__dict__)
-        self._save(state)
-        return record
+    ) -> Dict[str, Any]:
+        doc = self._load()
+        entry = {
+            "policy_id": policy_id,
+            "version": version,
+            "artifact_path": artifact_path,
+            "metadata": metadata or {},
+            "rollout_status": "registered",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        doc["policies"].append(entry)
+        self._save(doc)
+        return entry
 
-    def start_canary(self, policy_id: str, percent: int = 5) -> None:
-        state = self._load()
-        record = self._find_policy(state, policy_id)
-        record["rollout_status"] = "canary"
-        record["canary_percent"] = max(1, min(50, percent))
-        self._save(state)
+    def start_canary(self, policy_id: str, version: str, cohort_percent: float) -> Dict[str, Any]:
+        entry = self._find(policy_id, version)
+        entry["rollout_status"] = "canary"
+        entry["canary_cohort_percent"] = max(0.0, min(100.0, cohort_percent))
+        entry["canary_started_at"] = datetime.now(timezone.utc).isoformat()
+        self._update(entry)
+        return entry
 
-    def evaluate_canary(self, policy_id: str, baseline_metrics: Dict[str, float], canary_metrics: Dict[str, float]) -> str:
-        """Compare canary vs baseline metrics and promote or rollback.
+    def promote(self, policy_id: str, version: str) -> Dict[str, Any]:
+        doc = self._load()
+        for policy in doc["policies"]:
+            if policy["policy_id"] == policy_id:
+                policy["rollout_status"] = "archived"
+        target = self._find(policy_id, version, doc=doc)
+        target["rollout_status"] = "promoted"
+        target["promoted_at"] = datetime.now(timezone.utc).isoformat()
+        self._save(doc)
+        return target
 
-        Returns either "promoted" or "rolled_back".
-        """
-        baseline = baseline_metrics.get("score", 0.0)
-        candidate = canary_metrics.get("score", 0.0)
-        regression = canary_metrics.get("exploit_risk", 0.0) > baseline_metrics.get("exploit_risk", 0.0) + 0.03
+    def rollback(self, policy_id: str, version: str, reason: str) -> Dict[str, Any]:
+        entry = self._find(policy_id, version)
+        entry["rollout_status"] = "rolled_back"
+        entry["rollback_reason"] = reason
+        entry["rolled_back_at"] = datetime.now(timezone.utc).isoformat()
+        self._update(entry)
+        return entry
 
-        decision = "rolled_back"
-        if candidate >= baseline and not regression:
-            self.promote(policy_id)
-            decision = "promoted"
-        else:
-            self.rollback(policy_id)
-
-        state = self._load()
-        state.setdefault("history", []).append(
-            {
-                "policy_id": policy_id,
-                "decision": decision,
-                "baseline_metrics": baseline_metrics,
-                "canary_metrics": canary_metrics,
-                "timestamp_ms": int(time.time() * 1000),
-            }
-        )
-        self._save(state)
-        return decision
-
-    def promote(self, policy_id: str) -> None:
-        state = self._load()
-        record = self._find_policy(state, policy_id)
-        record["rollout_status"] = "promoted"
-        record["canary_percent"] = 100
-        state["active_policy_id"] = policy_id
-        self._save(state)
-
-    def rollback(self, policy_id: str) -> None:
-        state = self._load()
-        record = self._find_policy(state, policy_id)
-        record["rollout_status"] = "rolled_back"
-        record["canary_percent"] = 0
-        self._save(state)
-
-    def get_active_policy(self) -> Optional[Dict[str, Any]]:
-        state = self._load()
-        active = state.get("active_policy_id")
-        if not active:
+    def get_promoted(self, policy_id: str) -> Optional[Dict[str, Any]]:
+        doc = self._load()
+        candidates = [
+            item for item in doc["policies"] if item["policy_id"] == policy_id and item["rollout_status"] == "promoted"
+        ]
+        if not candidates:
             return None
-        return self._find_policy(state, active)
+        return sorted(candidates, key=lambda item: item["version"])[-1]
 
-    def list_policies(self) -> List[Dict[str, Any]]:
-        return list(self._load().get("policies", []))
+    def get_canary(self, policy_id: str) -> Optional[Dict[str, Any]]:
+        doc = self._load()
+        for item in doc["policies"]:
+            if item["policy_id"] == policy_id and item["rollout_status"] == "canary":
+                return item
+        return None
 
-    def _find_policy(self, state: Dict[str, Any], policy_id: str) -> Dict[str, Any]:
-        for record in state.get("policies", []):
-            if record.get("policy_id") == policy_id:
-                return record
-        raise KeyError(f"Unknown policy_id={policy_id!r}")
+    def list_policies(self, policy_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        doc = self._load()
+        if policy_id is None:
+            return doc["policies"]
+        return [item for item in doc["policies"] if item["policy_id"] == policy_id]
+
+    def _find(self, policy_id: str, version: str, doc: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        doc = doc or self._load()
+        for item in doc["policies"]:
+            if item["policy_id"] == policy_id and item["version"] == version:
+                return item
+        raise KeyError(f"Policy not found: {policy_id}@{version}")
+
+    def _update(self, updated_entry: Dict[str, Any]) -> None:
+        doc = self._load()
+        for index, item in enumerate(doc["policies"]):
+            if item["policy_id"] == updated_entry["policy_id"] and item["version"] == updated_entry["version"]:
+                doc["policies"][index] = updated_entry
+                self._save(doc)
+                return
+        raise KeyError(f"Policy not found: {updated_entry['policy_id']}@{updated_entry['version']}")
 
     def _load(self) -> Dict[str, Any]:
-        with self.registry_path.open("r", encoding="utf-8") as fh:
-            return json.load(fh)
+        return json.loads(self.registry_path.read_text(encoding="utf-8"))
 
-    def _save(self, state: Dict[str, Any]) -> None:
-        with self.registry_path.open("w", encoding="utf-8") as fh:
-            json.dump(state, fh, indent=2)
+    def _save(self, doc: Dict[str, Any]) -> None:
+        self.registry_path.write_text(json.dumps(doc, indent=2), encoding="utf-8")
+
+
+__all__ = ["PolicyMetadata", "PolicyRegistry"]

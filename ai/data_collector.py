@@ -1,40 +1,49 @@
-"""Event collection for AI model improvement loops.
+"""Event collection utilities for the AI improvement subsystem.
 
-This module captures gameplay telemetry to support downstream dataset
-construction, training, and evaluation workflows.
+This module is responsible for durable, append-only logging of gameplay events
+that are later transformed into model training/evaluation datasets.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 import json
-import threading
-import time
-from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Iterable, Mapping, Optional
+from threading import Lock
+from typing import Any, Dict, Iterable, List, Optional
 
 
 @dataclass(frozen=True)
-class GameEvent:
-    """Structured representation of a gameplay event."""
+class Event:
+    """A normalized gameplay event."""
 
     event_type: str
-    timestamp_ms: int
-    match_id: str
-    entity_id: str
-    payload: Dict[str, Any]
-    tags: Dict[str, str] = field(default_factory=dict)
+    timestamp: str
+    session_id: str
+    player_id: Optional[str]
+    npc_id: Optional[str]
+    payload: Dict[str, Any] = field(default_factory=dict)
+
+    def to_json(self) -> str:
+        return json.dumps(
+            {
+                "event_type": self.event_type,
+                "timestamp": self.timestamp,
+                "session_id": self.session_id,
+                "player_id": self.player_id,
+                "npc_id": self.npc_id,
+                "payload": self.payload,
+            },
+            separators=(",", ":"),
+            sort_keys=True,
+        )
 
 
 class DataCollector:
-    """Writes gameplay events as JSONL for model improvement.
+    """Thread-safe collector for game telemetry.
 
-    Expected event families:
-      - player_behavior
-      - npc_outcome
-      - economy_metric
-      - death_cause
-      - quest_completion
+    Events are buffered in memory and periodically flushed to a JSONL file.
     """
 
     SUPPORTED_EVENT_TYPES = {
@@ -45,50 +54,66 @@ class DataCollector:
         "quest_completion",
     }
 
-    def __init__(self, log_path: str | Path) -> None:
+    def __init__(self, log_path: str | Path, flush_every: int = 50) -> None:
         self.log_path = Path(log_path)
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
-        self._lock = threading.Lock()
+        self.flush_every = max(1, flush_every)
+        self._buffer: List[Event] = []
+        self._lock = Lock()
 
-    def log_event(
+    def collect(
         self,
         event_type: str,
-        match_id: str,
-        entity_id: str,
-        payload: Mapping[str, Any],
-        *,
-        tags: Optional[Mapping[str, str]] = None,
-        timestamp_ms: Optional[int] = None,
-    ) -> GameEvent:
-        """Log a strongly-typed event to JSONL storage."""
+        session_id: str,
+        payload: Dict[str, Any],
+        player_id: Optional[str] = None,
+        npc_id: Optional[str] = None,
+        timestamp: Optional[str] = None,
+    ) -> None:
+        """Collect and queue a gameplay event."""
         if event_type not in self.SUPPORTED_EVENT_TYPES:
-            supported = ", ".join(sorted(self.SUPPORTED_EVENT_TYPES))
-            raise ValueError(f"Unsupported event_type={event_type!r}. Supported: {supported}")
+            raise ValueError(f"Unsupported event type: {event_type}")
 
-        event = GameEvent(
+        event = Event(
             event_type=event_type,
-            timestamp_ms=timestamp_ms if timestamp_ms is not None else int(time.time() * 1000),
-            match_id=match_id,
-            entity_id=entity_id,
-            payload=dict(payload),
-            tags=dict(tags or {}),
+            timestamp=timestamp or datetime.now(timezone.utc).isoformat(),
+            session_id=session_id,
+            player_id=player_id,
+            npc_id=npc_id,
+            payload=payload,
         )
-        self._append_jsonl(asdict(event))
-        return event
 
-    def log_batch(self, events: Iterable[GameEvent]) -> int:
-        """Log a batch of pre-validated events and return written count."""
-        count = 0
         with self._lock:
-            with self.log_path.open("a", encoding="utf-8") as fh:
-                for event in events:
-                    if event.event_type not in self.SUPPORTED_EVENT_TYPES:
-                        continue
-                    fh.write(json.dumps(asdict(event), separators=(",", ":")) + "\n")
-                    count += 1
-        return count
+            self._buffer.append(event)
+            if len(self._buffer) >= self.flush_every:
+                self._flush_unlocked()
 
-    def _append_jsonl(self, row: Mapping[str, Any]) -> None:
+    def collect_batch(self, events: Iterable[Dict[str, Any]]) -> None:
+        """Collect multiple events from dict records."""
+        for event in events:
+            self.collect(
+                event_type=event["event_type"],
+                session_id=event["session_id"],
+                payload=event.get("payload", {}),
+                player_id=event.get("player_id"),
+                npc_id=event.get("npc_id"),
+                timestamp=event.get("timestamp"),
+            )
+
+    def flush(self) -> None:
         with self._lock:
-            with self.log_path.open("a", encoding="utf-8") as fh:
-                fh.write(json.dumps(dict(row), separators=(",", ":")) + "\n")
+            self._flush_unlocked()
+
+    def _flush_unlocked(self) -> None:
+        if not self._buffer:
+            return
+
+        with self.log_path.open("a", encoding="utf-8") as handle:
+            for event in self._buffer:
+                handle.write(event.to_json())
+                handle.write("\n")
+
+        self._buffer.clear()
+
+
+__all__ = ["DataCollector", "Event"]
