@@ -1,28 +1,31 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://aegisworld.local/schemas/world-state-v2.json",
-  "title": "World State",
+  "title": "WorldState",
   "type": "object",
-  "required": ["world_id", "tick", "entities", "metadata", "version"],
+  "required": [
+    "schema_version",
+    "world_version",
+    "seed",
+    "tick",
+    "entities",
+    "metadata",
+    "created_at",
+    "updated_at"
+  ],
   "properties": {
-    "world_id": {"type": "string"},
-    "tick": {"type": "integer", "minimum": 0},
+    "schema_version": { "type": "integer", "minimum": 1 },
+    "world_version": { "type": "integer", "minimum": 0 },
+    "seed": { "type": "integer" },
+    "tick": { "type": "integer", "minimum": 0 },
     "entities": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "required": ["entity_id", "kind", "attributes", "version"],
-        "properties": {
-          "entity_id": {"type": "string"},
-          "kind": {"type": "string"},
-          "attributes": {"type": "object"},
-          "version": {"type": "integer", "const": 2}
-        },
-        "additionalProperties": false
-      }
+      "type": "object",
+      "additionalProperties": { "type": "object" }
     },
-    "metadata": {"type": "object"},
-    "version": {"type": "integer", "const": 2}
-  },
-  "additionalProperties": false
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "created_at": { "type": "string", "format": "date-time" },
+    "updated_at": { "type": "string", "format": "date-time" }
+  }
 }

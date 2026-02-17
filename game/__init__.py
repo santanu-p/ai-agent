@@ -1,1 +1,1 @@
-"""Game package."""
+# Game package marker.

@@ -1,19 +1,14 @@
-"""Migration script from schema version 1 to 2."""
-
 from __future__ import annotations
 
-from typing import Any, Dict, Mapping
+from typing import Any, Dict
+
+from game.world.migrations import register
 
 
-def migrate_v1_to_v2(state: Mapping[str, Any]) -> Dict[str, Any]:
-    migrated = dict(state)
-    migrated.setdefault("metadata", {})
-    migrated_entities = []
-    for entity in migrated.get("entities", []):
-        e = dict(entity)
-        e.setdefault("attributes", {})
-        e["version"] = 2
-        migrated_entities.append(e)
-    migrated["entities"] = migrated_entities
-    migrated["version"] = 2
-    return migrated
+@register(1)
+def migrate_v1_to_v2(payload: Dict[str, Any]) -> Dict[str, Any]:
+    upgraded = dict(payload)
+    # v2 introduces metadata and keeps deterministic defaults.
+    upgraded.setdefault("metadata", {})
+    upgraded["schema_version"] = 2
+    return upgraded

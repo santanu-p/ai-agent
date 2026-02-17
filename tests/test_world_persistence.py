@@ -1,66 +1,77 @@
+from __future__ import annotations
+
 import json
-import tempfile
-import unittest
 from pathlib import Path
 
-from game.world.persistence import WorldPersistenceManager
+from game.world.migrations import migrate_world_state
 from game.world.rebuild import rebuild_world
+from game.world.state_schema import WorldState
+from game.world.storage import WorldStore
 
 
-class WorldPersistenceTests(unittest.TestCase):
-    def test_snapshot_diff_and_rebuild(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            manager = WorldPersistenceManager(data_root=tmp, snapshot_interval_ticks=2, signing_key="k")
+def test_periodic_snapshot_and_diffs(tmp_path: Path) -> None:
+    store = WorldStore(root_dir=tmp_path / "data", snapshot_interval=2, signature_key="secret")
+    state = WorldState(seed=42)
+    store.write_snapshot(state)
 
-            state0 = {
-                "world_id": "w1",
-                "tick": 0,
-                "entities": [{"entity_id": "e1", "kind": "npc", "attributes": {"hp": 10}, "version": 2}],
-                "metadata": {"zone": "a"},
-                "version": 2,
-            }
-            manager.persist_tick(state0)  # snapshot-0
+    state = store.persist_update(state, [{"op": "set", "entity_id": "npc_1", "value": {"hp": 10}}])
+    state = store.persist_update(state, [{"op": "patch", "entity_id": "npc_1", "value": {"hp": 11}}])
 
-            state1 = {
-                "world_id": "w1",
-                "tick": 1,
-                "entities": [{"entity_id": "e1", "kind": "npc", "attributes": {"hp": 9}, "version": 2}],
-                "metadata": {"zone": "a"},
-                "version": 2,
-            }
-            manager.persist_tick(state1)  # diff-1
+    snapshots = store.list_snapshots()
+    diffs = store.list_diffs()
 
-            state2 = {
-                "world_id": "w1",
-                "tick": 2,
-                "entities": [
-                    {"entity_id": "e1", "kind": "npc", "attributes": {"hp": 9}, "version": 2},
-                    {"entity_id": "e2", "kind": "item", "attributes": {"qty": 1}, "version": 2},
-                ],
-                "metadata": {"zone": "b"},
-                "version": 2,
-            }
-            manager.persist_tick(state2)  # snapshot-2
-
-            rebuilt = rebuild_world(None, data_root=tmp, signing_key="k")
-            self.assertEqual(rebuilt["tick"], 2)
-            self.assertEqual(rebuilt["metadata"]["zone"], "b")
-            self.assertEqual(len(rebuilt["entities"]), 2)
-
-    def test_startup_recovery_skips_corrupt_snapshot(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            manager = WorldPersistenceManager(data_root=tmp, snapshot_interval_ticks=1, signing_key="k")
-            state = {"world_id": "w", "tick": 1, "entities": [], "metadata": {}, "version": 2}
-            snapshot_id = manager.write_snapshot(state)
-            path = Path(tmp) / "snapshots" / f"{snapshot_id}.json"
-
-            raw = json.loads(path.read_text(encoding="utf-8"))
-            raw["state"]["tick"] = 999
-            path.write_text(json.dumps(raw), encoding="utf-8")
-
-            recovered = manager.load_latest_valid_snapshot()
-            self.assertEqual(recovered["tick"], 0)
+    assert "snapshot_00000000" in snapshots
+    assert "snapshot_00000002" in snapshots
+    assert len(diffs) == 2
 
 
-if __name__ == "__main__":
-    unittest.main()
+def test_rebuild_world_is_deterministic(tmp_path: Path) -> None:
+    store = WorldStore(root_dir=tmp_path / "data", snapshot_interval=2, signature_key="secret")
+    state = WorldState(seed=123)
+    snapshot_id = store.write_snapshot(state)
+
+    state = store.persist_update(state, [{"op": "set", "entity_id": "unit", "value": {"x": 1}}])
+    state = store.persist_update(state, [{"op": "patch", "entity_id": "unit", "value": {"x": 3, "y": 2}}])
+
+    rebuilt_a = rebuild_world(snapshot_id, store=store)
+    rebuilt_b = rebuild_world(snapshot_id, store=store)
+
+    assert rebuilt_a.world_version == rebuilt_b.world_version
+    assert rebuilt_a.tick == rebuilt_b.tick
+    assert rebuilt_a.entities == rebuilt_b.entities
+    assert rebuilt_a.entities["unit"] == {"x": 3, "y": 2}
+
+
+def test_migration_v1_to_v2() -> None:
+    legacy = {
+        "schema_version": 1,
+        "world_version": 1,
+        "seed": 7,
+        "tick": 5,
+        "entities": {},
+        "created_at": "2024-01-01T00:00:00+00:00",
+        "updated_at": "2024-01-01T00:00:00+00:00",
+    }
+
+    migrated = migrate_world_state(legacy, target_version=2)
+    assert migrated["schema_version"] == 2
+    assert migrated["metadata"] == {}
+
+
+def test_startup_recovery_uses_latest_valid_snapshot(tmp_path: Path) -> None:
+    store = WorldStore(root_dir=tmp_path / "data", snapshot_interval=2, signature_key="secret")
+    state = WorldState(seed=99)
+    store.write_snapshot(state)
+
+    state = store.persist_update(state, [{"op": "set", "entity_id": "boss", "value": {"hp": 100}}])
+    store.write_snapshot(state)
+
+    # Corrupt newest snapshot; recovery should skip it and use previous valid snapshot.
+    newest = tmp_path / "data" / "snapshots" / "snapshot_00000001.json"
+    raw = json.loads(newest.read_text(encoding="utf-8"))
+    raw["payload"]["tick"] = 9999
+    newest.write_text(json.dumps(raw), encoding="utf-8")
+
+    recovered = store.recover_startup_state()
+    assert recovered.world_version == 1
+    assert recovered.entities["boss"]["hp"] == 100
