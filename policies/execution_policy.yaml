@@ -1,30 +1,49 @@
 version: 1
-execution_policy:
-  writable_paths:
+
+autonomy:
+  ai_writable:
     allow:
-      - game/ai/**
-      - logs/**
-      - policies/**
-      - tmp/**
+      - game/ai/
+      - policies/
+      - logs/
+      - tools/
     deny:
-      - .git/**
-      - secrets/**
-      - /etc/**
-      - /root/**
-  network:
-    allow:
+      - .git/
+      - secrets/
+      - production/
+      - system/
+
+network:
+  mode: restricted
+  allow:
+    domains:
       - api.github.com
-      - pypi.org
-      - files.pythonhosted.org
-      - localhost
-      - 127.0.0.1
-    deny:
+      - artifacts.local
+      - telemetry.internal
+    cidr:
+      - 10.0.0.0/8
+      - 192.168.0.0/16
+    ports:
+      - 443
+      - 8443
+  deny:
+    domains:
       - "*"
-  resources:
-    max_cpu_percent: 75
+    ports:
+      - 22
+      - 25
+      - 3306
+
+resource_limits:
+  cpu:
+    max_percent: 70
+    max_cores: 4
+  memory:
     max_ram_mb: 4096
-    max_runtime_seconds: 900
-  circuit_breakers:
-    max_failed_deployments: 3
-    max_regression_threshold: 0.2
-    emergency_disable_file: .autonomy_disabled
+  execution:
+    max_time_seconds: 900
+
+circuit_breakers:
+  max_failed_deployments: 3
+  max_regression_threshold: 0.05
+  emergency_disable_file: logs/.autonomy_disabled
