@@ -51,14 +51,40 @@ class ReflectionRecord(BaseModel):
     memory_patch: str
 
 
+class IterationObservation(BaseModel):
+    iteration: int
+    tool_results: list[str] = Field(default_factory=list)
+    delta: dict[str, Any] = Field(default_factory=dict)
+    status: str
+
+
+class ActionRationale(BaseModel):
+    iteration: int
+    action: str
+    decision: str
+    reason: str
+
+
+class PolicyAdjustmentSuggestion(BaseModel):
+    title: str
+    trigger: str
+    recommendation: str
+
+
 class ExecuteRequest(BaseModel):
     goal: GoalSpec
     policy: ExecutionPolicy
+    context_snapshot: dict[str, Any] = Field(default_factory=dict)
+    governance_objectives: list[str] = Field(default_factory=list)
+    governance_constraints: list[str] = Field(default_factory=list)
+    iteration_observations: list[IterationObservation] = Field(default_factory=list)
     max_iterations: int = 3
 
 
 class ExecuteResponse(BaseModel):
     trace: TaskTrace
     reflections: list[ReflectionRecord]
-    memory_entries: dict[str, list[str]]
-
+    observations: list[IterationObservation]
+    rationales: list[ActionRationale]
+    policy_adjustment_suggestion: PolicyAdjustmentSuggestion | None = None
+    memory_entries: dict[str, list[dict[str, Any]]]
