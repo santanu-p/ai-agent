@@ -6,6 +6,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict
 from urllib.parse import parse_qs, urlparse
 
+from aegisworld_benchmark import BenchmarkRunner
 from aegisworld_service import AegisWorldService
 
 
@@ -61,9 +62,6 @@ class AegisWorldHandler(BaseHTTPRequestHandler):
             if path == "/v1/policies/simulate":
                 self._send(HTTPStatus.OK, service.simulate_policy(payload))
                 return
-            if path == "/v1/benchmark/run":
-                self._send(HTTPStatus.OK, service.benchmark_run(payload))
-                return
             if path.startswith("/v1/learning/compact"):
                 parsed = urlparse(path)
                 params = parse_qs(parsed.query)
@@ -73,6 +71,12 @@ class AegisWorldHandler(BaseHTTPRequestHandler):
                     return
                 max_items = int(payload.get("max_items", params.get("max_items", [100])[0]))
                 self._send(HTTPStatus.OK, service.compact_memory(agent_id=agent_id, max_items=max_items))
+                return
+            if path == "/v1/benchmark/run":
+                runs = int(payload.get("runs", 10))
+                domain = payload.get("domain", "dev")
+                result = BenchmarkRunner(service).run(runs=runs, domain=domain)
+                self._send(HTTPStatus.OK, result.to_dict())
                 return
         except KeyError as exc:
             self._send(HTTPStatus.BAD_REQUEST, {"error": f"missing field: {exc}"})
