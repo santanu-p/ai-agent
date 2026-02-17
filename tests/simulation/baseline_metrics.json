@@ -1,0 +1,25 @@
+{
+  "generated_at": "2026-01-01T00:00:00+00:00",
+  "metrics": [
+    {
+      "name": "economy_stress_test",
+      "value": 0.0622
+    },
+    {
+      "name": "combat_difficulty_progression",
+      "value": 0.57
+    },
+    {
+      "name": "quest_deadlock_detection",
+      "value": 0.016
+    },
+    {
+      "name": "npc_navigation_pathing_robustness",
+      "value": 0.955
+    },
+    {
+      "name": "save_load_migration_invariants",
+      "value": 0.989
+    }
+  ]
+}
