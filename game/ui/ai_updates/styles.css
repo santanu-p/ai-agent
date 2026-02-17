@@ -1,0 +1,47 @@
+.ai-updates-panel {
+  max-width: 760px;
+  margin: 16px auto;
+  padding: 16px;
+  border-radius: 12px;
+  background: #111827;
+  color: #f9fafb;
+  font-family: Inter, system-ui, sans-serif;
+}
+
+.ai-updates-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.deployed-at {
+  color: #9ca3af;
+  font-size: 0.9rem;
+}
+
+.update-controls {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.patch-notes {
+  padding-left: 20px;
+  line-height: 1.5;
+}
+
+.feedback-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.feedback-actions button {
+  border: 1px solid #374151;
+  border-radius: 8px;
+  padding: 8px 10px;
+  cursor: pointer;
+  background: #1f2937;
+  color: #f3f4f6;
+}
