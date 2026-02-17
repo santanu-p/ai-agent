@@ -93,6 +93,21 @@ class RolloutDecision:
 
 
 @dataclass
+class GovernanceVerdict:
+    """Outcome and rationale of governance policy evaluation."""
+
+    approved: bool
+    rationale: list[str]
+    composite_score: float
+    guardrails_satisfied: bool
+    missing_constraints: list[str]
+    requires_human_approval: bool
+    human_approval_granted: bool
+    required_red_team_scenarios: list[str]
+    provided_red_team_scenarios: list[str]
+
+
+@dataclass
 class IterationRecord:
     """Persisted artifact for one improvement-loop iteration."""
 
@@ -104,6 +119,7 @@ class IterationRecord:
     prompt_text: str
     proposed_diff: str
     verification_results: VerificationResults
+    governance_verdict: GovernanceVerdict
     rollout_decision: RolloutDecision
 
     def to_dict(self) -> dict[str, Any]:
@@ -134,5 +150,6 @@ class IterationStore:
             prompt_text=data["prompt_text"],
             proposed_diff=data["proposed_diff"],
             verification_results=VerificationResults(**data["verification_results"]),
+            governance_verdict=GovernanceVerdict(**data["governance_verdict"]),
             rollout_decision=RolloutDecision(**data["rollout_decision"]),
         )
