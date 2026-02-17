@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from aegisworld_policy import PolicyEngine
-from aegisworld_runtime import AgentKernel, AgentMemory, AgentRuntimeState
+from aegisworld_runtime import AgentKernel, AgentMemory
 from aegisworld_models import ExecutionPolicy, GoalSpec
 from aegisworld_service import AegisWorldService
 
@@ -24,25 +24,6 @@ def test_policy_blocks_unapproved_tool() -> None:
     assert any(r.startswith("blocked_tools") for r in decision.reasons)
 
 
-def test_policy_blocks_scope_mismatch() -> None:
-    policy = ExecutionPolicy(
-        tool_allowances=["planner", "executor"],
-        resource_limits={"max_budget": 5, "max_latency_ms": 5000},
-        network_scope="private_vpc",
-        data_scope="org_scoped",
-        rollback_policy="auto",
-    )
-    decision = PolicyEngine().evaluate(
-        policy=policy,
-        requested_tools=["planner"],
-        estimated_cost=1.0,
-        estimated_latency_ms=100,
-        requested_network_scope="public_internet",
-    )
-    assert decision.allowed is False
-    assert any(r.startswith("network_scope_denied") for r in decision.reasons)
-
-
 def test_agent_kernel_updates_memory_on_success() -> None:
     kernel = AgentKernel()
     policy = ExecutionPolicy(
@@ -62,42 +43,15 @@ def test_agent_kernel_updates_memory_on_success() -> None:
         domains=["dev"],
     )
     memory = AgentMemory()
-    state = AgentRuntimeState()
-    trace, reflection = kernel.execute_goal("agent_1", goal, policy, memory, runtime_state=state)
+    trace, reflection = kernel.execute_goal("agent_1", goal, policy, memory)
 
     assert trace.outcome == "success"
     assert reflection is not None
     assert memory.episodic
     assert f"goal:{goal.goal_id}" in memory.semantic
-    assert state.circuit_open is False
 
 
-def test_circuit_breaker_opens_after_repeated_policy_failures() -> None:
-    kernel = AgentKernel()
-    policy = ExecutionPolicy(
-        tool_allowances=["planner"],
-        resource_limits={"max_budget": 20, "max_latency_ms": 5000},
-        network_scope="public_internet",
-        data_scope="org_scoped",
-        rollback_policy="auto",
-    )
-    goal = GoalSpec(
-        goal_id="goal_2",
-        intent="Need executor tool",
-        constraints={},
-        budget=3.0,
-        deadline="tomorrow",
-        risk_tolerance="medium",
-        domains=["dev"],
-    )
-    memory = AgentMemory()
-    state = AgentRuntimeState()
-    for _ in range(3):
-        kernel.execute_goal("agent_1", goal, policy, memory, runtime_state=state)
-    assert state.circuit_open is True
-
-
-def test_service_workflow_end_to_end_learning_metrics_and_autonomy_tick(tmp_path: Path) -> None:
+def test_service_workflow_end_to_end_and_learning(tmp_path: Path) -> None:
     state_file = tmp_path / "state.json"
     service = AegisWorldService(state_file=str(state_file))
     agent = service.create_agent({"name": "pilot-agent"})
@@ -111,14 +65,6 @@ def test_service_workflow_end_to_end_learning_metrics_and_autonomy_tick(tmp_path
     summary = service.learning_summary()
     assert summary["total_reflections"] >= 1
 
-    service.create_goal({"intent": "Queued goal", "domains": ["dev"]})
-    tick = service.autonomous_tick(agent_id=agent["agent_id"], max_goals=1)
-    assert tick["executed"] == 1
-
-    metrics = service.metrics()
-    assert metrics["total_traces"] >= 2
-    assert 0.0 <= metrics["success_rate"] <= 1.0
-
 
 def test_state_persistence_roundtrip(tmp_path: Path) -> None:
     state_file = tmp_path / "state.json"
@@ -129,5 +75,31 @@ def test_state_persistence_roundtrip(tmp_path: Path) -> None:
 
     reloaded = AegisWorldService(state_file=str(state_file))
     assert len(reloaded.agents) == 1
-    assert len(reloaded.goals) >= 1
+    assert len(reloaded.goals) == 1
     assert len(reloaded.list_traces()) == 1
+
+
+def test_policy_update_and_metrics(tmp_path: Path) -> None:
+    service = AegisWorldService(state_file=str(tmp_path / "state.json"))
+    agent = service.create_agent({"name": "ops-agent"})
+    updated = service.update_agent_policy(agent["agent_id"], {"tool_allowances": ["planner"]})
+    assert updated["policy"]["tool_allowances"] == ["planner"]
+
+    goal = service.create_goal({"intent": "Do work", "domains": ["dev"]})
+    result = service.execute(agent["agent_id"], goal["goal_id"])
+    assert result["trace"]["outcome"].startswith("blocked:")
+
+    metrics = service.metrics()
+    assert "benchmark" in metrics
+    assert metrics["incident_count"] >= 1
+
+
+def test_benchmark_run(tmp_path: Path) -> None:
+    service = AegisWorldService(state_file=str(tmp_path / "state.json"))
+    agent = service.create_agent({"name": "bench-agent"})
+    goal1 = service.create_goal({"intent": "task1", "domains": ["dev"]})
+    goal2 = service.create_goal({"intent": "task2", "domains": ["dev"]})
+
+    summary = service.benchmark_run({"agent_id": agent["agent_id"], "goal_ids": [goal1["goal_id"], goal2["goal_id"]]})
+    assert summary["total_runs"] >= 2
+    assert 0.0 <= summary["success_rate"] <= 1.0

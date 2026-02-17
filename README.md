@@ -3,12 +3,13 @@
 This repository includes an executable prototype that turns the 90-day plan into a working baseline runtime:
 
 - Core platform types (`GoalSpec`, `ExecutionPolicy`, `TaskTrace`, `ReflectionRecord`, `SecurityIncident`, `AutonomousChangeSet`)
-- Policy engine with budget/latency/tool gates plus network/data scope enforcement
+- Policy engine with budget/latency/tool gates
 - Agent kernel loop implementing Plan → Execute → Observe → Reflect → Patch Memory/Policy → Re-plan
-- Local circuit breaker and retry logic for runtime resilience
 - Learning engine for reflection clustering and memory compaction
+- Benchmark runner for workload success-rate summaries
 - In-memory control/runtime service with JSON snapshot persistence
-- HTTP API surface aligned to the plan endpoints and operational metrics
+- Budget guards (goal-level + monthly envelope tracking)
+- HTTP API surface aligned to the plan endpoints
 
 ## Run API server
 
@@ -23,7 +24,7 @@ python server.py
 - `POST /v1/agents`
 - `GET /v1/agents/{agent_id}`
 - `POST /v1/agents/{agent_id}/execute`
-- `POST /v1/autonomy/tick`
+- `POST /v1/agents/{agent_id}/policy`
 - `GET /v1/agents/{agent_id}/memory`
 - `POST /v1/domain/social/projects`
 - `POST /v1/domain/dev/pipelines`
@@ -35,6 +36,7 @@ python server.py
 - `GET /v1/changes`
 - `GET /v1/learning/summary`
 - `POST /v1/learning/compact?agent_id=...&max_items=...`
+- `POST /v1/benchmark/run`
 - `GET /v1/metrics`
 - `GET /healthz`
 

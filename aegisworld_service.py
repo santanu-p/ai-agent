@@ -4,9 +4,9 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import RLock
-from time import time
 from typing import Any, Dict, List
 
+from aegisworld_benchmark import BenchmarkRunner
 from aegisworld_learning import LearningEngine
 from aegisworld_models import (
     AutonomousChangeSet,
@@ -15,7 +15,10 @@ from aegisworld_models import (
     SecurityIncident,
     new_id,
 )
-from aegisworld_runtime import AgentKernel, AgentMemory, AgentRuntimeState
+from aegisworld_runtime import AgentKernel, AgentMemory
+
+
+MONTHLY_COST_LIMIT = 150000.0
 
 
 def default_policy() -> ExecutionPolicy:
@@ -34,13 +37,14 @@ class Agent:
     name: str
     policy: ExecutionPolicy = field(default_factory=default_policy)
     memory: AgentMemory = field(default_factory=AgentMemory)
-    runtime_state: AgentRuntimeState = field(default_factory=AgentRuntimeState)
+    spent_budget: float = 0.0
 
 
 class AegisWorldService:
     def __init__(self, state_file: str = "state/aegisworld_state.json") -> None:
         self.kernel = AgentKernel()
         self.learning = LearningEngine()
+        self.benchmark = BenchmarkRunner()
         self.lock = RLock()
         self.state_path = Path(state_file)
 
@@ -50,8 +54,7 @@ class AegisWorldService:
         self.reflections: List[Dict[str, Any]] = []
         self.incidents: List[SecurityIncident] = []
         self.changes: List[AutonomousChangeSet] = []
-        self.pending_goal_ids: List[str] = []
-        self.incident_containment_seconds: List[float] = []
+        self.total_spend: float = 0.0
 
         self._load_state()
 
@@ -67,7 +70,6 @@ class AegisWorldService:
                 domains=payload.get("domains", ["dev"]),
             )
             self.goals[goal.goal_id] = goal
-            self.pending_goal_ids.append(goal.goal_id)
             self._save_state()
             return goal.to_dict()
 
@@ -91,6 +93,7 @@ class AegisWorldService:
             return {
                 "agent_id": agent.agent_id,
                 "name": agent.name,
+                "spent_budget": agent.spent_budget,
                 "policy": {
                     "tool_allowances": agent.policy.tool_allowances,
                     "resource_limits": agent.policy.resource_limits,
@@ -98,67 +101,87 @@ class AegisWorldService:
                     "data_scope": agent.policy.data_scope,
                     "rollback_policy": agent.policy.rollback_policy,
                 },
-                "runtime": {
-                    "consecutive_failures": agent.runtime_state.consecutive_failures,
-                    "circuit_open": agent.runtime_state.circuit_open,
-                },
             }
+
+    def update_agent_policy(self, agent_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        with self.lock:
+            agent = self.agents[agent_id]
+            policy = ExecutionPolicy(
+                tool_allowances=payload.get("tool_allowances", agent.policy.tool_allowances),
+                resource_limits=payload.get("resource_limits", agent.policy.resource_limits),
+                network_scope=payload.get("network_scope", agent.policy.network_scope),
+                data_scope=payload.get("data_scope", agent.policy.data_scope),
+                rollback_policy=payload.get("rollback_policy", agent.policy.rollback_policy),
+            )
+            agent.policy = policy
+            self._save_state()
+            return self.get_agent(agent_id) or {}
 
     def execute(self, agent_id: str, goal_id: str) -> Dict[str, Any]:
         with self.lock:
             agent = self.agents[agent_id]
             goal = self.goals[goal_id]
 
+            if agent.spent_budget >= goal.budget:
+                trace = {
+                    "trace_id": new_id("trace"),
+                    "goal_id": goal.goal_id,
+                    "agent_id": agent.agent_id,
+                    "steps": ["budget_guard"],
+                    "tool_calls": [],
+                    "model_calls": [],
+                    "latency_ms": 5,
+                    "token_cost": 0,
+                    "outcome": "blocked:goal_budget_exhausted",
+                }
+                self.traces.append(trace)
+                self._raise_incident("budget_guard_triggered", "high", "single_goal")
+                self._save_state()
+                return {"trace": trace, "reflection": None}
+
+            if self.total_spend >= MONTHLY_COST_LIMIT:
+                trace = {
+                    "trace_id": new_id("trace"),
+                    "goal_id": goal.goal_id,
+                    "agent_id": agent.agent_id,
+                    "steps": ["monthly_budget_guard"],
+                    "tool_calls": [],
+                    "model_calls": [],
+                    "latency_ms": 5,
+                    "token_cost": 0,
+                    "outcome": "blocked:monthly_budget_exhausted",
+                }
+                self.traces.append(trace)
+                self._raise_incident("monthly_budget_guard_triggered", "critical", "platform")
+                self._save_state()
+                return {"trace": trace, "reflection": None}
+
             trace, reflection = self.kernel.execute_goal(
                 agent_id=agent.agent_id,
                 goal=goal,
                 policy=agent.policy,
                 memory=agent.memory,
-                runtime_state=agent.runtime_state,
             )
 
-            self.traces.append(trace.to_dict())
+            trace_dict = trace.to_dict()
+            self.traces.append(trace_dict)
+            run_cost = float(trace.token_cost) / 100.0
+            agent.spent_budget += run_cost
+            self.total_spend += run_cost
+
             if reflection:
                 reflection_dict = reflection.to_dict()
                 self.reflections.append(reflection_dict)
                 self._propose_change(reflection_dict)
 
             if trace.outcome.startswith("blocked:"):
-                start = time()
-                incident = SecurityIncident(
-                    incident_id=new_id("inc"),
-                    signal_set=["policy_gate_denied"],
-                    severity="medium",
-                    blast_radius="single_goal",
-                    auto_actions=["goal_quarantine", "policy_simulation_required"],
-                    verification_state="verified",
-                )
-                self.incidents.append(incident)
-                self.incident_containment_seconds.append(max(time() - start, 0.001))
-
-            if goal_id in self.pending_goal_ids and trace.outcome == "success":
-                self.pending_goal_ids.remove(goal_id)
+                self._raise_incident("policy_gate_denied", "medium", "single_goal")
 
             self._save_state()
             return {
-                "trace": trace.to_dict(),
+                "trace": trace_dict,
                 "reflection": reflection.to_dict() if reflection else None,
             }
-
-    def autonomous_tick(self, agent_id: str | None = None, max_goals: int = 5) -> Dict[str, Any]:
-        with self.lock:
-            if not self.agents:
-                return {"executed": 0, "results": [], "note": "no_agents"}
-            resolved_agent_id = agent_id or next(iter(self.agents.keys()))
-            goal_ids = list(self.pending_goal_ids[:max_goals])
-
-        results: List[Dict[str, Any]] = []
-        for gid in goal_ids:
-            try:
-                results.append(self.execute(resolved_agent_id, gid))
-            except KeyError:
-                continue
-        return {"executed": len(results), "results": results}
 
     def get_memory(self, agent_id: str) -> Dict[str, Any]:
         with self.lock:
@@ -200,32 +223,6 @@ class AegisWorldService:
         with self.lock:
             return [c.to_dict() for c in self.changes]
 
-    def metrics(self) -> Dict[str, Any]:
-        with self.lock:
-            total = len(self.traces)
-            success = len([t for t in self.traces if t.get("outcome") == "success"])
-            blocked = total - success
-            p95_latency = 0
-            if self.traces:
-                latencies = sorted([int(t.get("latency_ms", 0)) for t in self.traces])
-                idx = max(int(0.95 * len(latencies)) - 1, 0)
-                p95_latency = latencies[idx]
-            containment_p95 = 0.0
-            if self.incident_containment_seconds:
-                c = sorted(self.incident_containment_seconds)
-                idx = max(int(0.95 * len(c)) - 1, 0)
-                containment_p95 = c[idx]
-            return {
-                "total_traces": total,
-                "success_traces": success,
-                "blocked_traces": blocked,
-                "success_rate": (success / total) if total else 0.0,
-                "p95_latency_ms": p95_latency,
-                "pending_goals": len(self.pending_goal_ids),
-                "incidents": len(self.incidents),
-                "p95_incident_containment_s": containment_p95,
-            }
-
     def simulate_policy(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         tool_allowances = payload.get("tool_allowances", ["planner", "executor"])
         policy = ExecutionPolicy(
@@ -238,16 +235,7 @@ class AegisWorldService:
         requested_tools = payload.get("requested_tools", ["planner"])
         estimated_cost = float(payload.get("estimated_cost", 1.0))
         estimated_latency_ms = int(payload.get("estimated_latency_ms", 1000))
-        requested_network_scope = payload.get("requested_network_scope")
-        requested_data_scope = payload.get("requested_data_scope")
-        decision = self.kernel.policy_engine.evaluate(
-            policy,
-            requested_tools,
-            estimated_cost,
-            estimated_latency_ms,
-            requested_network_scope=requested_network_scope,
-            requested_data_scope=requested_data_scope,
-        )
+        decision = self.kernel.policy_engine.evaluate(policy, requested_tools, estimated_cost, estimated_latency_ms)
         return decision.to_dict()
 
     def learning_summary(self) -> Dict[str, Any]:
@@ -262,6 +250,40 @@ class AegisWorldService:
             after = len(agent.memory.semantic)
             self._save_state()
             return {"agent_id": agent_id, "semantic_before": before, "semantic_after": after}
+
+    def metrics(self) -> Dict[str, Any]:
+        with self.lock:
+            benchmark = self.benchmark.summarize_traces(self.traces).to_dict()
+            availability = 1.0 if benchmark["total_runs"] == 0 else benchmark["success_rate"]
+            return {
+                "total_agents": len(self.agents),
+                "total_goals": len(self.goals),
+                "total_spend": round(self.total_spend, 2),
+                "monthly_cost_limit": MONTHLY_COST_LIMIT,
+                "availability_estimate": availability,
+                "benchmark": benchmark,
+                "incident_count": len(self.incidents),
+            }
+
+    def benchmark_run(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        with self.lock:
+            agent_id = payload["agent_id"]
+            goal_ids = payload.get("goal_ids", [])
+            for gid in goal_ids:
+                if gid in self.goals and agent_id in self.agents:
+                    self.execute(agent_id, gid)
+            return self.benchmark.summarize_traces(self.traces).to_dict()
+
+    def _raise_incident(self, signal: str, severity: str, blast_radius: str) -> None:
+        incident = SecurityIncident(
+            incident_id=new_id("inc"),
+            signal_set=[signal],
+            severity=severity,
+            blast_radius=blast_radius,
+            auto_actions=["quarantine", "policy_simulation_required"],
+            verification_state="verified",
+        )
+        self.incidents.append(incident)
 
     def _propose_change(self, reflection: Dict[str, Any]) -> None:
         patch = reflection.get("policy_patch") or {}
@@ -284,6 +306,7 @@ class AegisWorldService:
                 {
                     "agent_id": a.agent_id,
                     "name": a.name,
+                    "spent_budget": a.spent_budget,
                     "policy": {
                         "tool_allowances": a.policy.tool_allowances,
                         "resource_limits": a.policy.resource_limits,
@@ -296,10 +319,6 @@ class AegisWorldService:
                         "session": a.memory.session,
                         "semantic": a.memory.semantic,
                     },
-                    "runtime_state": {
-                        "consecutive_failures": a.runtime_state.consecutive_failures,
-                        "circuit_open": a.runtime_state.circuit_open,
-                    },
                 }
                 for a in self.agents.values()
             ],
@@ -307,8 +326,7 @@ class AegisWorldService:
             "reflections": self.reflections,
             "incidents": [i.to_dict() for i in self.incidents],
             "changes": [c.to_dict() for c in self.changes],
-            "pending_goal_ids": self.pending_goal_ids,
-            "incident_containment_seconds": self.incident_containment_seconds,
+            "total_spend": self.total_spend,
         }
         self.state_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
@@ -331,17 +349,12 @@ class AegisWorldService:
                 session=memory_data.get("session", {}),
                 semantic=memory_data.get("semantic", {}),
             )
-            runtime_data = a.get("runtime_state", {})
-            runtime_state = AgentRuntimeState(
-                consecutive_failures=runtime_data.get("consecutive_failures", 0),
-                circuit_open=runtime_data.get("circuit_open", False),
-            )
             agent = Agent(
                 agent_id=a["agent_id"],
                 name=a["name"],
                 policy=policy,
                 memory=memory,
-                runtime_state=runtime_state,
+                spent_budget=float(a.get("spent_budget", 0.0)),
             )
             self.agents[agent.agent_id] = agent
 
@@ -349,5 +362,4 @@ class AegisWorldService:
         self.reflections = data.get("reflections", [])
         self.incidents = [SecurityIncident(**i) for i in data.get("incidents", [])]
         self.changes = [AutonomousChangeSet(**c) for c in data.get("changes", [])]
-        self.pending_goal_ids = data.get("pending_goal_ids", [])
-        self.incident_containment_seconds = data.get("incident_containment_seconds", [])
+        self.total_spend = float(data.get("total_spend", 0.0))

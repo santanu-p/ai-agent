@@ -45,14 +45,9 @@ class AegisWorldHandler(BaseHTTPRequestHandler):
                 goal_id = payload["goal_id"]
                 self._send(HTTPStatus.OK, service.execute(agent_id=agent_id, goal_id=goal_id))
                 return
-            if path == "/v1/autonomy/tick":
-                self._send(
-                    HTTPStatus.OK,
-                    service.autonomous_tick(
-                        agent_id=payload.get("agent_id"),
-                        max_goals=int(payload.get("max_goals", 5)),
-                    ),
-                )
+            if path.startswith("/v1/agents/") and path.endswith("/policy"):
+                agent_id = path.split("/")[3]
+                self._send(HTTPStatus.OK, service.update_agent_policy(agent_id=agent_id, payload=payload))
                 return
             if path == "/v1/domain/social/projects":
                 self._send(HTTPStatus.CREATED, service.create_domain_project("social", payload))
@@ -65,6 +60,9 @@ class AegisWorldHandler(BaseHTTPRequestHandler):
                 return
             if path == "/v1/policies/simulate":
                 self._send(HTTPStatus.OK, service.simulate_policy(payload))
+                return
+            if path == "/v1/benchmark/run":
+                self._send(HTTPStatus.OK, service.benchmark_run(payload))
                 return
             if path.startswith("/v1/learning/compact"):
                 parsed = urlparse(path)

@@ -24,8 +24,6 @@ class PolicyEngine:
         requested_tools: List[str],
         estimated_cost: float,
         estimated_latency_ms: int,
-        requested_network_scope: str | None = None,
-        requested_data_scope: str | None = None,
     ) -> PolicyDecision:
         reasons: List[str] = []
 
@@ -40,11 +38,5 @@ class PolicyEngine:
         blocked = [tool for tool in requested_tools if not policy.allows_tool(tool)]
         if blocked:
             reasons.append(f"blocked_tools:{','.join(blocked)}")
-
-        if requested_network_scope and requested_network_scope != policy.network_scope:
-            reasons.append(f"network_scope_denied:{requested_network_scope}!={policy.network_scope}")
-
-        if requested_data_scope and requested_data_scope != policy.data_scope:
-            reasons.append(f"data_scope_denied:{requested_data_scope}!={policy.data_scope}")
 
         return PolicyDecision(allowed=not reasons, reasons=reasons)
