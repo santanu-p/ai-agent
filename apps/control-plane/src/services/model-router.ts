@@ -7,7 +7,17 @@ export interface RoutedModel {
 }
 
 export function routeModel(intent: string, budget: number): RoutedModel {
-  if (intent.toLowerCase().includes("code") || intent.toLowerCase().includes("deploy")) {
+  const normalizedIntent = intent.toLowerCase();
+
+  if (normalizedIntent.includes("open world") && normalizedIntent.includes("ai")) {
+    return {
+      provider: "local",
+      model: "aegis-openworld-ai",
+      reason: "ai-only open-world simulation workload"
+    };
+  }
+
+  if (normalizedIntent.includes("code") || normalizedIntent.includes("deploy")) {
     return {
       provider: "openai",
       model: "gpt-5",
@@ -27,4 +37,3 @@ export function routeModel(intent: string, budget: number): RoutedModel {
     reason: "general orchestration workload"
   };
 }
-
