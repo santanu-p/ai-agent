@@ -30,11 +30,11 @@ class AegisWorldHandler(BaseHTTPRequestHandler):
         self.wfile.write(encoded)
 
     def do_POST(self) -> None:  # noqa: N802
-        payload = read_json(self)
-        parsed = urlparse(self.path)
-        path = parsed.path
-
         try:
+            payload = read_json(self)
+            parsed = urlparse(self.path)
+            path = parsed.path
+
             if path == "/v1/goals":
                 self._send(HTTPStatus.CREATED, service.create_goal(payload))
                 return
@@ -78,6 +78,9 @@ class AegisWorldHandler(BaseHTTPRequestHandler):
                 max_items = int(payload.get("max_items", params.get("max_items", [100])[0]))
                 self._send(HTTPStatus.OK, service.compact_memory(agent_id=agent_id, max_items=max_items))
                 return
+        except json.JSONDecodeError:
+            self._send(HTTPStatus.BAD_REQUEST, {"error": "malformed JSON payload"})
+            return
         except KeyError as exc:
             self._send(HTTPStatus.BAD_REQUEST, {"error": f"missing field: {exc}"})
             return

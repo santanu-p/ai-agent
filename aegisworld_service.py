@@ -102,9 +102,11 @@ class AegisWorldService:
     def update_agent_policy(self, agent_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         with self.lock:
             agent = self.agents[agent_id]
+            merged_resource_limits = dict(agent.policy.resource_limits)
+            merged_resource_limits.update(payload.get("resource_limits", {}))
             agent.policy = ExecutionPolicy(
                 tool_allowances=payload.get("tool_allowances", agent.policy.tool_allowances),
-                resource_limits=payload.get("resource_limits", agent.policy.resource_limits),
+                resource_limits=merged_resource_limits,
                 network_scope=payload.get("network_scope", agent.policy.network_scope),
                 data_scope=payload.get("data_scope", agent.policy.data_scope),
                 rollback_policy=payload.get("rollback_policy", agent.policy.rollback_policy),
