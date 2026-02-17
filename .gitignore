@@ -1,0 +1,10 @@
+# Python cache
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local runtime state
+state/
+
+# Node dependencies (local tooling)
+node_modules/
