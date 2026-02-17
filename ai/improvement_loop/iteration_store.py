@@ -5,10 +5,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from .patch_generator import PatchProposal
-from .patch_verifier import VerificationResult
-from .release_manager import RolloutDecision
-from .telemetry_collector import MetricsSnapshot
+from .models import GeneratedPatch, GovernanceVerdict, MetricsSnapshot, RolloutDecision, VerificationResults
 
 
 @dataclass(slots=True)
@@ -19,6 +16,7 @@ class IterationRecord:
     prompt: str
     proposed_diff: str
     verification_results: dict[str, Any]
+    governance_verdict: dict[str, Any]
     rollout_decision: dict[str, Any]
     rollback_pointer: str | None
 
@@ -35,20 +33,19 @@ class IterationStore:
         *,
         iteration_id: str,
         snapshot: MetricsSnapshot,
-        proposal: PatchProposal,
-        verification: VerificationResult,
+        proposal: GeneratedPatch,
+        verification: VerificationResults,
+        governance: GovernanceVerdict,
         rollout: RolloutDecision,
     ) -> Path:
         record = IterationRecord(
             iteration_id=iteration_id,
-            metrics_snapshot=snapshot.to_dict(),
+            metrics_snapshot=asdict(snapshot),
             prompt_version=proposal.prompt_version,
-            prompt=proposal.prompt,
-            proposed_diff=proposal.proposed_diff,
-            verification_results={
-                "passed": verification.passed,
-                "checks": [asdict(check) for check in verification.checks],
-            },
+            prompt=proposal.prompt_text,
+            proposed_diff=proposal.diff,
+            verification_results=asdict(verification),
+            governance_verdict=asdict(governance),
             rollout_decision=asdict(rollout),
             rollback_pointer=rollout.rollback_pointer,
         )
