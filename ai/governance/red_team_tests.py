@@ -1,81 +1,83 @@
-"""Red-team scenario generation and checks for AI-driven changes.
+"""Red-team test catalog for AI-driven changes.
 
-This module provides lightweight, code-centric checks for exploit generation,
-griefing amplification, and economy abuse detection.
+The scenarios in this module are used to proactively evaluate exploitability,
+griefing potential, and economy abuse before releasing AI-authored updates.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
-from typing import Dict, List
+from enum import Enum
+from typing import Iterable, List
+
+
+class RedTeamCategory(str, Enum):
+    EXPLOIT_GENERATION = "exploit_generation"
+    GRIEFING_SCENARIO = "griefing_scenario"
+    ECONOMY_ABUSE = "economy_abuse"
 
 
 @dataclass(frozen=True)
-class Scenario:
-    name: str
-    category: str
-    severity: str
+class RedTeamScenario:
+    id: str
+    category: RedTeamCategory
     description: str
+    expected_failure_signal: str
 
 
-def generate_exploit_scenarios() -> List[Scenario]:
-    return [
-        Scenario(
-            name="dupe-item-chain",
-            category="exploit_generation",
-            severity="critical",
-            description="Sequence actions to duplicate high-value items via rollback race.",
+RED_TEAM_SCENARIOS: tuple[RedTeamScenario, ...] = (
+    RedTeamScenario(
+        id="rt.exploit.sequence-break",
+        category=RedTeamCategory.EXPLOIT_GENERATION,
+        description=(
+            "Attempt sequence-breaking progression by chaining timing-sensitive "
+            "actions across zones and reconnect boundaries."
         ),
-        Scenario(
-            name="cooldown-bypass-loop",
-            category="exploit_generation",
-            severity="high",
-            description="Explore state desyncs that reset ability cooldowns.",
+        expected_failure_signal="Unbounded progression gain or skipped progression gates.",
+    ),
+    RedTeamScenario(
+        id="rt.exploit.duplication",
+        category=RedTeamCategory.EXPLOIT_GENERATION,
+        description="Probe item/currency duplication via rollback and retry races.",
+        expected_failure_signal="Inventory or currency increases without valid sinks.",
+    ),
+    RedTeamScenario(
+        id="rt.grief.spawn-camping",
+        category=RedTeamCategory.GRIEFING_SCENARIO,
+        description=(
+            "Simulate coordinated spawn-camping and targeting asymmetry against "
+            "new or under-geared players."
         ),
-    ]
+        expected_failure_signal="Severe win-rate suppression for protected cohorts.",
+    ),
+    RedTeamScenario(
+        id="rt.grief.matchmaking-manipulation",
+        category=RedTeamCategory.GRIEFING_SCENARIO,
+        description="Attempt MMR manipulation through intentional loss trading.",
+        expected_failure_signal="Match quality degradation and asymmetric stomps.",
+    ),
+    RedTeamScenario(
+        id="rt.econ.inflation-loop",
+        category=RedTeamCategory.ECONOMY_ABUSE,
+        description="Stress-test repeatable loops that mint net-positive currency.",
+        expected_failure_signal="Sustained economy inflation outside forecast range.",
+    ),
+    RedTeamScenario(
+        id="rt.econ.auction-cornering",
+        category=RedTeamCategory.ECONOMY_ABUSE,
+        description="Model market-cornering and price manipulation by colluding actors.",
+        expected_failure_signal="Price spikes and item accessibility collapse.",
+    ),
+)
 
 
-def generate_griefing_scenarios() -> List[Scenario]:
-    return [
-        Scenario(
-            name="matchmaking-smurf-funnel",
-            category="griefing",
-            severity="high",
-            description="Detect whether ranking updates enable intentional novice farming.",
-        ),
-        Scenario(
-            name="resource-denial-kiting",
-            category="griefing",
-            severity="medium",
-            description="Check if AI tuning enables indefinite resource denial loops.",
-        ),
-    ]
+def scenarios_for(category: RedTeamCategory) -> List[RedTeamScenario]:
+    """Return all scenarios for the provided red-team category."""
+
+    return [scenario for scenario in RED_TEAM_SCENARIOS if scenario.category == category]
 
 
-def generate_economy_abuse_scenarios() -> List[Scenario]:
-    return [
-        Scenario(
-            name="auction-price-corner",
-            category="economy_abuse",
-            severity="critical",
-            description="Probe if bots can corner commodity supply and force inflation spikes.",
-        ),
-        Scenario(
-            name="reward-funnel-alt-ring",
-            category="economy_abuse",
-            severity="high",
-            description="Assess cross-account reward funneling under new reward weights.",
-        ),
-    ]
+def scenario_ids(scenarios: Iterable[RedTeamScenario]) -> List[str]:
+    """Extract stable scenario IDs for reporting and CI gates."""
 
-
-def detect_high_risk_findings(results: List[Dict[str, str]]) -> List[Dict[str, str]]:
-    """Return findings that should block deployment.
-
-    Expected input item shape: {"name": str, "status": "pass|fail", "severity": str}
-    """
-
-    block_severities = {"critical", "high"}
-    return [
-        finding
-        for finding in results
-        if finding.get("status") == "fail" and finding.get("severity") in block_severities
-    ]
+    return [scenario.id for scenario in scenarios]

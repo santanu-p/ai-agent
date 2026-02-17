@@ -1,68 +1,56 @@
-# Self-Improvement Safety and Governance
+# Self-Improvement Safety Playbook
 
-## Purpose
+This document defines mandatory controls for any AI-driven change that can affect player progression, game balance, economy, persistence, or live service reliability.
 
-This document defines mandatory safeguards for all AI-driven self-improvement or balance updates.
+## 1) Human Override (Always Available)
 
-## Non-Negotiable Constraints
+- A designated human operator can block, pause, or roll back any AI-proposed change without waiting for automated consensus.
+- Override controls must be available in the deployment path and in the live operations dashboard.
+- AI systems must treat human override decisions as final and non-bypassable.
 
-1. **No save corruption**: Any change that risks persistence incompatibility or data loss is automatically rejected.
-2. **No pay-to-win drift**: Any change that materially increases monetization-linked power is automatically rejected.
-3. **No unfair hidden nerfs**: Any player-impacting nerf must be transparent, documented, and fairness-reviewed.
+## 2) Emergency Stop (Kill Switch)
 
-## Objective Specification
+- Every AI-driven rollout must include a tested emergency stop that can disable further policy actions in real time.
+- Emergency stop actions must:
+  - Halt new AI-authored adjustments.
+  - Revert to last known safe configuration.
+  - Preserve forensic logs for incident analysis.
+- Emergency stop activation should be executable within minutes by on-call operations staff.
 
-All optimization must jointly balance:
+## 3) Incident Response
 
-- **Retention**
-- **Challenge quality**
-- **Fairness**
-- **Performance**
+### Trigger Conditions
 
-Hard floors are enforced per objective, so retention gains cannot bypass fairness or runtime guarantees.
+Initiate incident response when any of the following occur:
 
-## Human Approval Gates (Required)
+- Save integrity risk (corruption, invalid migrations, irreversible loss).
+- Economy instability (unexpected inflation/deflation, exploit-driven wealth concentration).
+- Fairness regression (hidden nerfs, systematically worse outcomes for protected cohorts).
+- Reliability degradation beyond agreed SLOs.
 
-Human approval is mandatory before deployment for any change touching high-risk categories:
+### Response Procedure
 
-- Economy rewrites
-- Combat balance swings
-- Persistence migrations
+1. **Contain**: Trigger emergency stop and freeze additional AI rollouts.
+2. **Triage**: Classify severity, scope player impact, and identify affected systems.
+3. **Mitigate**: Apply rollback or compensating controls; protect player assets.
+4. **Communicate**: Publish internal incident updates and external player messaging as needed.
+5. **Recover**: Validate stabilization with red-team checks and guardrail metrics.
+6. **Review**: Run post-incident review with corrective actions and ownership.
 
-## Human Override
+## 4) Mandatory High-Risk Human Approval
 
-A designated human operator may override an AI recommendation only with:
+The following change categories require explicit human approval before production release:
 
-- Written rationale
-- Scope-bounded rollback plan
-- Timestamped approval record
+- Economy rewrites.
+- Combat balance swings.
+- Persistence migrations.
 
-## Emergency Stop
+No automated policy can self-approve these categories.
 
-A global emergency stop must be available to disable AI-driven live tuning immediately when severe risk is detected.
+## 5) Non-Negotiable Product/Safety Rules
 
-Minimum expectations:
+All AI-driven changes must comply with these hard constraints:
 
-- One-step operator trigger
-- Safe fallback configuration
-- Verification that autonomous updates have halted
-
-## Incident Response
-
-If a harmful AI-driven change reaches users:
-
-1. Trigger emergency stop.
-2. Roll back to last known-good configuration.
-3. Preserve logs and audit artifacts.
-4. Open an incident report with timeline, impact, root cause, and corrective actions.
-5. Add/expand red-team tests to prevent recurrence.
-
-## Red-Team Testing Requirements
-
-Every release candidate must run red-team scenarios covering:
-
-- Exploit generation
-- Griefing enablement
-- Economy abuse and market manipulation
-
-Any unresolved critical/high finding blocks release until mitigated and re-tested.
+- **No save corruption**: never risk irreversible player data loss.
+- **No pay-to-win drift**: no monetization-linked power advantages in core outcomes.
+- **No unfair hidden nerfs**: no materially negative balance changes without transparent disclosure.
