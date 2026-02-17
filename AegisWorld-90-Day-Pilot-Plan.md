@@ -382,14 +382,9 @@ All actions are gated by machine-enforced policy checks and verified post-execut
 - p95 latency < 15s
 - 99.9% availability over 30-day soak
 - Incident containment < 5 minutes
-- 95%+ quest chain completion for MVP slice in controlled playtests
-- Session crash-free rate ≥ 99.5% in canary and production shards
-
-#### Gameplay Quality
-
-- Median session length ≥ 20 minutes in pilot playtests
-- Quest completion rate ≥ 65% for generated primary quests
-- NPC behavior stability ≥ 95% (no stuck/invalid-state transitions across 30-minute simulation windows)
+- Median gameplay session length ≥ 20 minutes in pilot cohort
+- Quest completion rate ≥ 65% for primary questline
+- NPC behavior stability ≥ 95% (no deadlock/reset intervention events per 1,000 NPC-hours)
 
 ---
 
@@ -412,22 +407,24 @@ All actions are gated by machine-enforced policy checks and verified post-execut
 ### Days 31–45
 - Game core loop prototype (movement, combat, interaction)
 - World chunk loader
-- Persistence baseline
+- Persistence baseline for player/world state
 
 ### Days 46–60
 - Procedural biome generation
 - Quest generation pipeline
-- NPC behavior trees/policies
+- NPC behavior trees/policy runtime
 
 ### Days 61–75
-- Autonomous tuning loop for economy, combat, and quest balancing
-- Shadow-mode evaluation for balance and progression adjustments
+- Autonomous tuning loop for economy/combat/quest balancing
+- Shadow-mode evaluation against live player simulations
+- Memory and reflection signals integrated into tuning policies
 
 ### Days 76–90
 - Playable open-world demo
-- Crash-free session target tracking
-- Retention proxy metric instrumentation
-- Automated rebuild drill
+- Crash-free session target ≥ 99.5%
+- Retention proxy metric (D1 return-intent or equivalent) ≥ 35%
+- Automated rebuild drill (full environment + game state recovery)
+- Chaos, security, load, and gameplay quality validation
 
 ---
 
