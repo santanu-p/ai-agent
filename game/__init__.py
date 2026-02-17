@@ -1,1 +1,1 @@
-"""Game package."""
+"""Game package for the local sandbox prototype."""
