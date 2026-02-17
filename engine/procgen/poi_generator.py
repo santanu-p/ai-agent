@@ -1,180 +1,126 @@
-"""Deterministic generation of points-of-interest and connective roads."""
+"""Procedural POI generation tied to deterministic terrain chunks."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
-import heapq
+from hashlib import blake2b
 import random
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Dict, Iterable, List, Tuple
 
-from engine.procgen.terrain import Biome, GenerationKey, Tile, is_land, neighbors4
+from engine.procgen.terrain import TerrainChunk
 
 
-class POIType(str, Enum):
-    SETTLEMENT = "settlement"
-    RUIN = "ruin"
-    DUNGEON = "dungeon"
+Coord = Tuple[int, int]
 
 
 @dataclass(frozen=True)
-class POI:
-    id: str
-    type: POIType
-    x: int
-    y: int
-    chunk_x: int
-    chunk_y: int
+class PointOfInterest:
+    poi_id: str
+    kind: str
+    position: Coord
     metadata: Dict[str, str]
 
 
 @dataclass(frozen=True)
 class Road:
-    from_poi: str
-    to_poi: str
-    path: List[Tuple[int, int]]
+    start_poi: str
+    end_poi: str
+    path: List[Coord]
+
+
+@dataclass(frozen=True)
+class ChunkPOIResult:
+    chunk_x: int
+    chunk_y: int
+    seed: int
+    version: str
+    points: List[PointOfInterest]
+    roads: List[Road]
 
 
 class POIGenerator:
-    """Builds in-chunk POIs and local roads with seed/version determinism."""
+    """Creates settlements, ruins, dungeons, and roads for each chunk."""
 
-    def __init__(self, key: GenerationKey) -> None:
-        self._key = key
+    def __init__(self, seed: int, version: str):
+        self.seed = seed
+        self.version = version
 
-    def generate(
-        self,
-        chunk_x: int,
-        chunk_y: int,
-        chunk: Sequence[Sequence[Tile]],
-        neighboring_pois: Optional[Iterable[POI]] = None,
-    ) -> Tuple[List[POI], List[Road]]:
-        rng = random.Random(self._key.namespaced_seed(f"poi:{chunk_x}:{chunk_y}"))
-        walkable = [tile for row in chunk for tile in row if is_land(tile)]
-        if not walkable:
-            return [], []
+    def generate_chunk_pois(self, terrain_chunk: TerrainChunk) -> ChunkPOIResult:
+        rng = self._chunk_rng(terrain_chunk.chunk_x, terrain_chunk.chunk_y)
+        points: List[PointOfInterest] = []
 
-        pois: List[POI] = []
-        pois.extend(self._spawn_settlements(chunk_x, chunk_y, walkable, rng))
-        pois.extend(self._spawn_ruins(chunk_x, chunk_y, walkable, rng))
-        pois.extend(self._spawn_dungeons(chunk_x, chunk_y, walkable, rng))
-
-        connected = list(neighboring_pois or []) + pois
-        roads = self._connect_settlements(chunk, connected)
-        return pois, roads
-
-    def _spawn_settlements(
-        self, chunk_x: int, chunk_y: int, walkable: List[Tile], rng: random.Random
-    ) -> List[POI]:
-        fertile = [t for t in walkable if t.biome in {Biome.PLAINS, Biome.FOREST, Biome.SAVANNA}]
-        count = 1 if fertile and rng.random() < 0.65 else 0
-        result: List[POI] = []
-        for idx in range(count):
-            tile = rng.choice(fertile)
-            result.append(
-                POI(
-                    id=f"settlement:{chunk_x}:{chunk_y}:{idx}",
-                    type=POIType.SETTLEMENT,
-                    x=tile.x,
-                    y=tile.y,
-                    chunk_x=chunk_x,
-                    chunk_y=chunk_y,
-                    metadata={"size": rng.choice(["hamlet", "village", "town"])},
+        for y, row in enumerate(terrain_chunk.cells):
+            for x, cell in enumerate(row):
+                world_pos = (
+                    terrain_chunk.chunk_x * len(row) + x,
+                    terrain_chunk.chunk_y * len(terrain_chunk.cells) + y,
                 )
-            )
-        return result
+                roll = rng.random()
+                if cell.biome in {"grassland", "temperate_forest"} and roll < 0.012:
+                    points.append(self._poi("settlement", world_pos, rng, prosperity=cell.moisture))
+                elif cell.biome in {"desert", "mountain", "taiga"} and roll < 0.009:
+                    points.append(self._poi("ruin", world_pos, rng, age=cell.elevation))
+                elif cell.biome not in {"ocean"} and roll < 0.008:
+                    points.append(self._poi("dungeon", world_pos, rng, danger=cell.elevation + cell.moisture))
 
-    def _spawn_ruins(self, chunk_x: int, chunk_y: int, walkable: List[Tile], rng: random.Random) -> List[POI]:
-        count = 1 if rng.random() < 0.35 else 0
-        if not count:
-            return []
-        tile = rng.choice(walkable)
-        return [
-            POI(
-                id=f"ruin:{chunk_x}:{chunk_y}:0",
-                type=POIType.RUIN,
-                x=tile.x,
-                y=tile.y,
-                chunk_x=chunk_x,
-                chunk_y=chunk_y,
-                metadata={"age": rng.choice(["ancient", "forgotten", "collapsed"])},
-            )
-        ]
+        roads = self._generate_roads(points)
+        return ChunkPOIResult(
+            chunk_x=terrain_chunk.chunk_x,
+            chunk_y=terrain_chunk.chunk_y,
+            seed=self.seed,
+            version=self.version,
+            points=points,
+            roads=roads,
+        )
 
-    def _spawn_dungeons(
-        self, chunk_x: int, chunk_y: int, walkable: List[Tile], rng: random.Random
-    ) -> List[POI]:
-        mountainous = [t for t in walkable if t.biome in {Biome.MOUNTAIN, Biome.TUNDRA, Biome.SNOW}]
-        if not mountainous or rng.random() >= 0.45:
-            return []
-        tile = rng.choice(mountainous)
-        return [
-            POI(
-                id=f"dungeon:{chunk_x}:{chunk_y}:0",
-                type=POIType.DUNGEON,
-                x=tile.x,
-                y=tile.y,
-                chunk_x=chunk_x,
-                chunk_y=chunk_y,
-                metadata={"threat": rng.choice(["low", "medium", "high"])},
-            )
-        ]
-
-    def _connect_settlements(self, chunk: Sequence[Sequence[Tile]], pois: Sequence[POI]) -> List[Road]:
-        settlements = [p for p in pois if p.type == POIType.SETTLEMENT]
-        if len(settlements) < 2:
-            return []
-
+    def _generate_roads(self, points: Iterable[PointOfInterest]) -> List[Road]:
+        settlements = [p for p in points if p.kind == "settlement"]
         roads: List[Road] = []
-        for origin in settlements:
-            target = min(
-                (s for s in settlements if s.id != origin.id),
-                key=lambda s: abs(s.x - origin.x) + abs(s.y - origin.y),
-            )
-            path = self._pathfind(origin, target, chunk)
-            if path:
-                roads.append(Road(from_poi=origin.id, to_poi=target.id, path=path))
+        for i, source in enumerate(settlements):
+            nearest = self._nearest(source.position, settlements[:i] + settlements[i + 1 :])
+            if not nearest:
+                continue
+            start, end = source.position, nearest.position
+            road = Road(start_poi=source.poi_id, end_poi=nearest.poi_id, path=self._manhattan_path(start, end))
+            if road.start_poi < road.end_poi:
+                roads.append(road)
         return roads
 
-    def _pathfind(
-        self,
-        origin: POI,
-        target: POI,
-        chunk: Sequence[Sequence[Tile]],
-    ) -> List[Tuple[int, int]]:
-        tile_map = {(tile.x, tile.y): tile for row in chunk for tile in row}
-        start = (origin.x, origin.y)
-        goal = (target.x, target.y)
-        if start not in tile_map or goal not in tile_map:
-            return []
+    @staticmethod
+    def _nearest(position: Coord, candidates: List[PointOfInterest]) -> PointOfInterest | None:
+        if not candidates:
+            return None
+        return min(candidates, key=lambda poi: abs(position[0] - poi.position[0]) + abs(position[1] - poi.position[1]))
 
-        frontier: List[Tuple[float, Tuple[int, int]]] = [(0.0, start)]
-        came_from: Dict[Tuple[int, int], Optional[Tuple[int, int]]] = {start: None}
-        cost_so_far: Dict[Tuple[int, int], float] = {start: 0.0}
+    @staticmethod
+    def _manhattan_path(start: Coord, end: Coord) -> List[Coord]:
+        x0, y0 = start
+        x1, y1 = end
+        path = [start]
 
-        while frontier:
-            _, current = heapq.heappop(frontier)
-            if current == goal:
-                break
+        step_x = 1 if x1 > x0 else -1
+        for x in range(x0, x1, step_x):
+            path.append((x + step_x, y0))
 
-            for nxt in neighbors4(*current):
-                tile = tile_map.get(nxt)
-                if tile is None or not is_land(tile):
-                    continue
-                move_cost = 1.0 + max(0.0, tile.elevation - 0.7) * 4.0
-                new_cost = cost_so_far[current] + move_cost
-                if nxt not in cost_so_far or new_cost < cost_so_far[nxt]:
-                    cost_so_far[nxt] = new_cost
-                    priority = new_cost + abs(goal[0] - nxt[0]) + abs(goal[1] - nxt[1])
-                    heapq.heappush(frontier, (priority, nxt))
-                    came_from[nxt] = current
+        step_y = 1 if y1 > y0 else -1
+        for y in range(y0, y1, step_y):
+            path.append((x1, y + step_y))
 
-        if goal not in came_from:
-            return []
-
-        path: List[Tuple[int, int]] = []
-        cur: Optional[Tuple[int, int]] = goal
-        while cur is not None:
-            path.append(cur)
-            cur = came_from[cur]
-        path.reverse()
         return path
+
+    def _poi(self, kind: str, position: Coord, rng: random.Random, **metrics: float) -> PointOfInterest:
+        digest = blake2b(
+            f"poi:{self.seed}:{self.version}:{kind}:{position[0]}:{position[1]}".encode(),
+            digest_size=6,
+        ).hexdigest()
+        poi_id = f"{kind[:3]}-{digest}"
+        metadata = {k: f"{v:.2f}" for k, v in metrics.items()}
+        metadata["name_seed"] = str(rng.randint(1000, 9999))
+        return PointOfInterest(poi_id=poi_id, kind=kind, position=position, metadata=metadata)
+
+    def _chunk_rng(self, chunk_x: int, chunk_y: int) -> random.Random:
+        digest = blake2b(
+            f"poi-chunk:{self.seed}:{self.version}:{chunk_x}:{chunk_y}".encode(),
+            digest_size=16,
+        ).digest()
+        return random.Random(int.from_bytes(digest, "big"))

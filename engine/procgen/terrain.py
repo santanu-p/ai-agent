@@ -1,169 +1,115 @@
-"""Procedural terrain and biome generation.
-
-The generator is deterministic for a `(seed, version)` pair so saved chunks can
-be reconstructed in future sessions.
-"""
+"""Deterministic terrain and biome generation for chunk-based worlds."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
-import hashlib
+from hashlib import blake2b
 import math
-from typing import Dict, List, Tuple
-
-
-class Biome(str, Enum):
-    OCEAN = "ocean"
-    BEACH = "beach"
-    PLAINS = "plains"
-    FOREST = "forest"
-    DESERT = "desert"
-    SAVANNA = "savanna"
-    TUNDRA = "tundra"
-    MOUNTAIN = "mountain"
-    SNOW = "snow"
-    SWAMP = "swamp"
+import random
+from typing import List
 
 
 @dataclass(frozen=True)
-class GenerationKey:
-    """Reproducibility key used by every world-generation subsystem."""
-
-    seed: int
-    version: str
-
-    def namespaced_seed(self, namespace: str) -> int:
-        payload = f"{self.seed}:{self.version}:{namespace}".encode("utf-8")
-        digest = hashlib.blake2s(payload, digest_size=8).digest()
-        return int.from_bytes(digest, "big", signed=False)
+class TerrainConfig:
+    chunk_size: int = 32
+    elevation_scale: float = 96.0
+    moisture_scale: float = 72.0
+    temperature_scale: float = 128.0
+    octaves: int = 4
+    persistence: float = 0.5
+    lacunarity: float = 2.0
+    sea_level: float = 0.42
 
 
 @dataclass(frozen=True)
-class Tile:
-    x: int
-    y: int
+class TerrainCell:
     elevation: float
     moisture: float
     temperature: float
-    biome: Biome
+    biome: str
+
+
+@dataclass(frozen=True)
+class TerrainChunk:
+    chunk_x: int
+    chunk_y: int
+    seed: int
+    version: str
+    cells: List[List[TerrainCell]]
 
 
 class TerrainGenerator:
-    """Generates terrain from fractal value noise and classifies biomes."""
+    """Generates reproducible terrain data from a seed and worldgen version."""
 
-    def __init__(
-        self,
-        key: GenerationKey,
-        base_scale: float = 80.0,
-        octaves: int = 5,
-        persistence: float = 0.5,
-        lacunarity: float = 2.0,
-        sea_level: float = 0.42,
-    ) -> None:
-        self._key = key
-        self._seed = key.namespaced_seed("terrain")
-        self._moisture_seed = key.namespaced_seed("moisture")
-        self._temperature_seed = key.namespaced_seed("temperature")
-        self._base_scale = base_scale
-        self._octaves = octaves
-        self._persistence = persistence
-        self._lacunarity = lacunarity
-        self._sea_level = sea_level
+    def __init__(self, seed: int, version: str, config: TerrainConfig | None = None):
+        self.seed = seed
+        self.version = version
+        self.config = config or TerrainConfig()
 
-    def generate_chunk(
-        self, chunk_x: int, chunk_y: int, chunk_size: int
-    ) -> List[List[Tile]]:
-        """Generate a chunk with deterministic terrain and biome assignment."""
-        tiles: List[List[Tile]] = []
-        origin_x = chunk_x * chunk_size
-        origin_y = chunk_y * chunk_size
+    def generate_chunk(self, chunk_x: int, chunk_y: int) -> TerrainChunk:
+        cells: List[List[TerrainCell]] = []
+        for local_y in range(self.config.chunk_size):
+            row: List[TerrainCell] = []
+            world_y = chunk_y * self.config.chunk_size + local_y
+            for local_x in range(self.config.chunk_size):
+                world_x = chunk_x * self.config.chunk_size + local_x
+                elevation = self._fractal_noise(world_x, world_y, self.config.elevation_scale)
+                moisture = self._fractal_noise(world_x, world_y, self.config.moisture_scale)
+                latitude = abs(world_y) / (self.config.chunk_size * 128)
+                latitude_temp_drop = min(latitude, 1.0) * 0.45
+                temperature = self._fractal_noise(world_x, world_y, self.config.temperature_scale) - latitude_temp_drop
+                temperature = max(0.0, min(1.0, temperature))
+                biome = self._classify_biome(elevation, moisture, temperature)
+                row.append(TerrainCell(elevation=elevation, moisture=moisture, temperature=temperature, biome=biome))
+            cells.append(row)
 
-        for ly in range(chunk_size):
-            row: List[Tile] = []
-            for lx in range(chunk_size):
-                x = origin_x + lx
-                y = origin_y + ly
-                elevation = self._fbm_noise(x, y, self._seed)
-                moisture = self._fbm_noise(x, y, self._moisture_seed)
-                latitude = abs((y % 4096) / 4096.0 - 0.5) * 2.0
-                climate_band = 1.0 - latitude
-                temperature = max(
-                    0.0,
-                    min(
-                        1.0,
-                        0.7 * self._fbm_noise(x, y, self._temperature_seed)
-                        + 0.3 * climate_band
-                        - elevation * 0.2,
-                    ),
-                )
-                biome = self._assign_biome(elevation, moisture, temperature)
-                row.append(
-                    Tile(
-                        x=x,
-                        y=y,
-                        elevation=elevation,
-                        moisture=moisture,
-                        temperature=temperature,
-                        biome=biome,
-                    )
-                )
-            tiles.append(row)
+        return TerrainChunk(
+            chunk_x=chunk_x,
+            chunk_y=chunk_y,
+            seed=self.seed,
+            version=self.version,
+            cells=cells,
+        )
 
-        return tiles
-
-    def _assign_biome(self, elevation: float, moisture: float, temperature: float) -> Biome:
-        if elevation < self._sea_level:
-            return Biome.OCEAN
-        if elevation < self._sea_level + 0.03:
-            return Biome.BEACH
-        if elevation > 0.85:
-            return Biome.SNOW if temperature < 0.35 else Biome.MOUNTAIN
-        if temperature < 0.22:
-            return Biome.TUNDRA if moisture < 0.55 else Biome.SNOW
-        if temperature > 0.78:
-            if moisture < 0.28:
-                return Biome.DESERT
-            return Biome.SAVANNA if moisture < 0.55 else Biome.SWAMP
-        if moisture > 0.72:
-            return Biome.SWAMP
-        if moisture > 0.45:
-            return Biome.FOREST
-        return Biome.PLAINS
-
-    def _fbm_noise(self, x: int, y: int, seed: int) -> float:
-        total = 0.0
-        frequency = 1.0
+    def _fractal_noise(self, x: int, y: int, base_scale: float) -> float:
         amplitude = 1.0
-        normalization = 0.0
+        frequency = 1.0 / max(base_scale, 1.0)
+        value = 0.0
+        amplitude_sum = 0.0
 
-        for _ in range(self._octaves):
-            sample_x = x / self._base_scale * frequency
-            sample_y = y / self._base_scale * frequency
-            total += self._value_noise(sample_x, sample_y, seed) * amplitude
-            normalization += amplitude
-            amplitude *= self._persistence
-            frequency *= self._lacunarity
+        for octave in range(self.config.octaves):
+            sample = self._value_noise(x * frequency, y * frequency, octave)
+            value += sample * amplitude
+            amplitude_sum += amplitude
+            amplitude *= self.config.persistence
+            frequency *= self.config.lacunarity
 
-        return total / normalization if normalization else 0.0
+        return value / amplitude_sum if amplitude_sum else 0.0
 
-    def _value_noise(self, x: float, y: float, seed: int) -> float:
+    def _value_noise(self, x: float, y: float, octave: int) -> float:
         x0 = math.floor(x)
         y0 = math.floor(y)
         x1 = x0 + 1
         y1 = y0 + 1
+        sx = x - x0
+        sy = y - y0
 
-        sx = self._smoothstep(x - x0)
-        sy = self._smoothstep(y - y0)
+        n00 = self._lattice(x0, y0, octave)
+        n10 = self._lattice(x1, y0, octave)
+        n01 = self._lattice(x0, y1, octave)
+        n11 = self._lattice(x1, y1, octave)
 
-        n00 = self._grid_random(x0, y0, seed)
-        n10 = self._grid_random(x1, y0, seed)
-        n01 = self._grid_random(x0, y1, seed)
-        n11 = self._grid_random(x1, y1, seed)
+        ix0 = self._lerp(n00, n10, self._smoothstep(sx))
+        ix1 = self._lerp(n01, n11, self._smoothstep(sx))
+        return self._lerp(ix0, ix1, self._smoothstep(sy))
 
-        nx0 = self._lerp(n00, n10, sx)
-        nx1 = self._lerp(n01, n11, sx)
-        return self._lerp(nx0, nx1, sy)
+    def _lattice(self, x: int, y: int, octave: int) -> float:
+        digest = blake2b(
+            f"terrain:{self.seed}:{self.version}:{octave}:{x}:{y}".encode(),
+            digest_size=16,
+        ).digest()
+        rng = random.Random(int.from_bytes(digest, "big"))
+        return rng.random()
 
     @staticmethod
     def _smoothstep(t: float) -> float:
@@ -171,28 +117,19 @@ class TerrainGenerator:
 
     @staticmethod
     def _lerp(a: float, b: float, t: float) -> float:
-        return a * (1.0 - t) + b * t
+        return a + t * (b - a)
 
-    @staticmethod
-    def _grid_random(x: int, y: int, seed: int) -> float:
-        payload = f"{seed}:{x}:{y}".encode("utf-8")
-        digest = hashlib.blake2b(payload, digest_size=8).digest()
-        raw = int.from_bytes(digest, "big", signed=False)
-        return raw / ((1 << 64) - 1)
-
-
-def summarize_chunk_biomes(chunk: List[List[Tile]]) -> Dict[Biome, int]:
-    """Convenience helper useful for balancing and telemetry."""
-    summary: Dict[Biome, int] = {}
-    for row in chunk:
-        for tile in row:
-            summary[tile.biome] = summary.get(tile.biome, 0) + 1
-    return summary
-
-
-def is_land(tile: Tile) -> bool:
-    return tile.biome not in {Biome.OCEAN, Biome.BEACH}
-
-
-def neighbors4(x: int, y: int) -> Tuple[Tuple[int, int], ...]:
-    return ((x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1))
+    def _classify_biome(self, elevation: float, moisture: float, temperature: float) -> str:
+        if elevation < self.config.sea_level:
+            return "ocean"
+        if elevation > 0.86:
+            return "mountain"
+        if temperature < 0.2:
+            return "tundra" if moisture < 0.5 else "taiga"
+        if moisture < 0.2:
+            return "desert"
+        if moisture < 0.4:
+            return "grassland"
+        if moisture < 0.7:
+            return "temperate_forest"
+        return "rainforest"

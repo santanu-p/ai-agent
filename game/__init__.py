@@ -1,1 +1,1 @@
-"""Game package for the local sandbox prototype."""
+"""Game simulation systems."""
