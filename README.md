@@ -171,6 +171,11 @@ Common endpoints include:
 - Architecture: `docs/architecture.md`
 - Operations runbook: `docs/runbook.md`
 - SLO targets: `docs/slo.md`
+- 90-day pilot plan: `AegisWorld-90-Day-Pilot-Plan.md`
+
+## Planning document merge note
+
+If you are reconciling long-lived planning branches (for example `codex/define-90-day-pilot-plan-for-aegisworld-*`), treat `AegisWorld-90-Day-Pilot-Plan.md` as the canonical source and keep links in this README synchronized to avoid repeat merge conflicts.
 
 ## Troubleshooting
 
