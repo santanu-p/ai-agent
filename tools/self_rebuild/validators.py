@@ -1,92 +1,133 @@
-"""Validation gates that every self-rebuild candidate must pass."""
+"""Validation gates used by the self-rebuild orchestrator."""
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 import json
 import subprocess
-import time
-from dataclasses import dataclass
 from pathlib import Path
+from typing import Iterable, Sequence
 
 
 @dataclass(frozen=True)
-class ValidationResult:
-    gate: str
+class GateResult:
+    name: str
     passed: bool
-    details: str
-    duration_s: float
+    command: str
+    output: str
 
 
-class Validators:
-    """Runs all mandatory quality and safety gates."""
+@dataclass
+class ValidationReport:
+    gates: list[GateResult] = field(default_factory=list)
 
-    def __init__(self, repo_root: Path) -> None:
-        self.repo_root = repo_root
+    @property
+    def passed(self) -> bool:
+        return all(g.passed for g in self.gates)
 
-    def _run(self, gate: str, command: list[str]) -> ValidationResult:
-        start = time.time()
-        proc = subprocess.run(
-            command,
-            cwd=self.repo_root,
-            capture_output=True,
-            text=True,
-        )
-        duration = time.time() - start
-        passed = proc.returncode == 0
-        details = (proc.stdout + "\n" + proc.stderr).strip()
-        return ValidationResult(gate=gate, passed=passed, details=details, duration_s=duration)
+    def add(self, gate: GateResult) -> None:
+        self.gates.append(gate)
 
-    def style_lint_type_checks(self) -> ValidationResult:
-        """Run style/lint/type checks.
-
-        Expects a repository-provided command named `scripts/checks.sh`.
-        """
-
-        return self._run("style_lint_type", ["bash", "scripts/checks.sh"])
-
-    def deterministic_simulation_replay_check(self) -> ValidationResult:
-        """Ensure deterministic replay of simulations."""
-
-        return self._run("deterministic_replay", ["bash", "scripts/replay_check.sh"])
-
-    def save_compatibility_check(self) -> ValidationResult:
-        """Verify save/backward compatibility guarantees."""
-
-        return self._run("save_compatibility", ["bash", "scripts/save_compat_check.sh"])
-
-    def crash_perf_budget_check(self) -> ValidationResult:
-        """Verify crash-free and performance budget limits."""
-
-        return self._run("crash_perf_budget", ["bash", "scripts/perf_budget_check.sh"])
-
-    def run_all(self) -> list[ValidationResult]:
-        """Run all mandatory gates in required order."""
-
-        results = [
-            self.style_lint_type_checks(),
-            self.deterministic_simulation_replay_check(),
-            self.save_compatibility_check(),
-            self.crash_perf_budget_check(),
-        ]
-        return results
-
-    @staticmethod
-    def as_report(results: list[ValidationResult]) -> dict:
-        """Serialize results for provenance metadata."""
-
+    def as_dict(self) -> dict:
         return {
-            "all_passed": all(result.passed for result in results),
+            "passed": self.passed,
             "gates": [
                 {
-                    "gate": result.gate,
-                    "passed": result.passed,
-                    "duration_s": round(result.duration_s, 3),
-                    "details": result.details,
+                    "name": gate.name,
+                    "passed": gate.passed,
+                    "command": gate.command,
+                    "output": gate.output,
                 }
-                for result in results
+                for gate in self.gates
             ],
         }
 
-    @staticmethod
-    def write_report(path: Path, results: list[ValidationResult]) -> None:
-        path.write_text(json.dumps(Validators.as_report(results), indent=2), encoding="utf-8")
+
+class ValidationError(RuntimeError):
+    pass
+
+
+class Validators:
+    """Mandatory gates for safe autonomous patch application."""
+
+    def __init__(self, repo_root: Path):
+        self.repo_root = repo_root
+
+    def run_all(
+        self,
+        *,
+        style_commands: Sequence[str],
+        replay_command: str,
+        save_compat_command: str,
+        crash_perf_command: str,
+    ) -> ValidationReport:
+        report = ValidationReport()
+
+        report.add(self.run_style_lint_type(style_commands))
+        report.add(self.run_deterministic_replay(replay_command))
+        report.add(self.run_save_compatibility(save_compat_command))
+        report.add(self.run_crash_perf_budget(crash_perf_command))
+
+        return report
+
+    def run_style_lint_type(self, commands: Iterable[str]) -> GateResult:
+        outputs: list[str] = []
+        for cmd in commands:
+            rc, out = self._run(cmd)
+            outputs.append(f"$ {cmd}\n{out}")
+            if rc != 0:
+                return GateResult(
+                    name="style_lint_type",
+                    passed=False,
+                    command=" && ".join(commands),
+                    output="\n\n".join(outputs),
+                )
+        return GateResult(
+            name="style_lint_type",
+            passed=True,
+            command=" && ".join(commands),
+            output="\n\n".join(outputs),
+        )
+
+    def run_deterministic_replay(self, command: str) -> GateResult:
+        rc, out = self._run(command)
+        return GateResult(
+            name="deterministic_replay",
+            passed=rc == 0,
+            command=command,
+            output=out,
+        )
+
+    def run_save_compatibility(self, command: str) -> GateResult:
+        rc, out = self._run(command)
+        return GateResult(
+            name="save_compatibility",
+            passed=rc == 0,
+            command=command,
+            output=out,
+        )
+
+    def run_crash_perf_budget(self, command: str) -> GateResult:
+        rc, out = self._run(command)
+        return GateResult(
+            name="crash_perf_budget",
+            passed=rc == 0,
+            command=command,
+            output=out,
+        )
+
+    def persist_report(self, report: ValidationReport, output_path: Path) -> None:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps(report.as_dict(), indent=2), encoding="utf-8")
+
+    def _run(self, command: str) -> tuple[int, str]:
+        proc = subprocess.run(
+            command,
+            shell=True,
+            cwd=self.repo_root,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        output = (proc.stdout or "") + (proc.stderr or "")
+        return proc.returncode, output.strip()

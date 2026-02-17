@@ -1,49 +1,54 @@
-"""Rollback helpers for reverting to last known-good state."""
+"""Rollback helpers for the self-rebuild workflow."""
 
 from __future__ import annotations
 
-import shutil
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+import shutil
+import subprocess
 
 
 @dataclass(frozen=True)
-class RollbackState:
-    commit_sha: str
-    policy_snapshot: Path
+class RollbackSnapshot:
+    commit: str
+    policy_backup_path: Path | None = None
 
 
 class RollbackManager:
-    """Tracks and restores the last known good build and policy snapshot."""
-
-    def __init__(self, repo_root: Path, state_dir: Path) -> None:
+    def __init__(self, repo_root: Path, policy_path: Path | None = None):
         self.repo_root = repo_root
-        self.state_dir = state_dir
-        self.state_dir.mkdir(parents=True, exist_ok=True)
+        self.policy_path = policy_path
 
-    @property
-    def policy_backup_path(self) -> Path:
-        return self.state_dir / "last_good_policy.json"
+    def capture_last_known_good(self) -> RollbackSnapshot:
+        commit = self._git("rev-parse HEAD")
+        backup_path: Path | None = None
 
-    @property
-    def commit_backup_path(self) -> Path:
-        return self.state_dir / "last_good_commit.txt"
+        if self.policy_path and self.policy_path.exists():
+            backup_path = self.repo_root / ".self_rebuild" / "policy.last_known_good"
+            backup_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(self.policy_path, backup_path)
 
-    def snapshot(self, policy_path: Path) -> RollbackState:
-        commit_sha = subprocess.check_output(
-            ["git", "rev-parse", "HEAD"], cwd=self.repo_root, text=True
-        ).strip()
-        shutil.copyfile(policy_path, self.policy_backup_path)
-        self.commit_backup_path.write_text(commit_sha, encoding="utf-8")
-        return RollbackState(commit_sha=commit_sha, policy_snapshot=self.policy_backup_path)
+        return RollbackSnapshot(commit=commit, policy_backup_path=backup_path)
 
-    def rollback(self, restore_policy_path: Path) -> str:
-        """Restore git state and policy to last known-good snapshot."""
+    def rollback(self, snapshot: RollbackSnapshot) -> None:
+        self._git(f"reset --hard {snapshot.commit}")
 
-        if not self.commit_backup_path.exists() or not self.policy_backup_path.exists():
-            raise FileNotFoundError("Rollback state not found.")
-        commit_sha = self.commit_backup_path.read_text(encoding="utf-8").strip()
-        subprocess.run(["git", "reset", "--hard", commit_sha], cwd=self.repo_root, check=True)
-        shutil.copyfile(self.policy_backup_path, restore_policy_path)
-        return commit_sha
+        if self.policy_path and snapshot.policy_backup_path and snapshot.policy_backup_path.exists():
+            shutil.copy2(snapshot.policy_backup_path, self.policy_path)
+
+    def mark_last_known_good(self) -> str:
+        return self._git("rev-parse HEAD")
+
+    def _git(self, args: str) -> str:
+        cmd = f"git {args}"
+        proc = subprocess.run(
+            cmd,
+            shell=True,
+            cwd=self.repo_root,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if proc.returncode != 0:
+            raise RuntimeError(f"Command failed: {cmd}\n{proc.stderr}")
+        return (proc.stdout or "").strip()

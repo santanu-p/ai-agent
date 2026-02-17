@@ -1,6 +1,19 @@
-"""Constrained self-rebuild workflow components."""
+"""Self-rebuild safety toolkit."""
 
-from .change_spec import ChangeSpec, DEFAULT_CHANGE_SPEC
-from .orchestrator import SelfRebuildOrchestrator
+from .change_spec import ChangeSpec
+from .orchestrator import AutoRebuildOrchestrator, DeploymentConfig, OrchestrationResult
+from .patch_generator import ImprovementGoal, PatchGenerator, TelemetrySnapshot
+from .rollback import RollbackManager
+from .validators import Validators
 
-__all__ = ["ChangeSpec", "DEFAULT_CHANGE_SPEC", "SelfRebuildOrchestrator"]
+__all__ = [
+    "AutoRebuildOrchestrator",
+    "ChangeSpec",
+    "DeploymentConfig",
+    "ImprovementGoal",
+    "OrchestrationResult",
+    "PatchGenerator",
+    "RollbackManager",
+    "TelemetrySnapshot",
+    "Validators",
+]
