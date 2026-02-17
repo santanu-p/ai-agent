@@ -1,22 +1,64 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Protocol
 
-from .iteration_store import IterationStore
-from .objective_evaluator import FitnessScore, ObjectiveEvaluator
-from .patch_generator import PatchGenerator, PatchProposal
-from .patch_verifier import PatchVerifier, VerificationResult
-from .release_manager import ReleaseManager, RolloutDecision
-from .telemetry_collector import MetricsSnapshot, TelemetryCollector
+from .models import GeneratedPatch, PatchProposal, VerificationResults, as_generated_patch
+
+
+class TelemetryCollectorLike(Protocol):
+    def collect(self, **telemetry_inputs: Any) -> Any: ...
+
+
+class ObjectiveEvaluatorLike(Protocol):
+    def evaluate(self, snapshot: Any) -> Any: ...
+
+
+class PatchGeneratorLike(Protocol):
+    def propose_patch(
+        self,
+        snapshot: Any,
+        fitness: Any,
+        constraints: list[str],
+        target_files: list[str],
+    ) -> PatchProposal | GeneratedPatch: ...
+
+
+class PatchVerifierLike(Protocol):
+    def verify(self, patch: GeneratedPatch) -> VerificationResults: ...
+
+
+class ReleaseManagerLike(Protocol):
+    def decide(
+        self,
+        *,
+        verification: VerificationResults,
+        candidate_revision: str,
+        stable_revision: str,
+        requested_fraction: float,
+    ) -> Any: ...
+
+
+class IterationStoreLike(Protocol):
+    def store(
+        self,
+        *,
+        iteration_id: str,
+        snapshot: Any,
+        proposal: PatchProposal | GeneratedPatch,
+        verification: VerificationResults,
+        rollout: Any,
+    ) -> str | Path: ...
 
 
 @dataclass(slots=True)
 class ImprovementLoopResult:
-    snapshot: MetricsSnapshot
-    fitness: FitnessScore
-    proposal: PatchProposal
-    verification: VerificationResult
-    rollout: RolloutDecision
+    snapshot: Any
+    fitness: Any
+    proposal: PatchProposal | GeneratedPatch
+    verification: VerificationResults
+    rollout: Any
     iteration_path: str
 
 
@@ -25,12 +67,12 @@ class ImprovementLoopEngine:
 
     def __init__(
         self,
-        telemetry_collector: TelemetryCollector,
-        objective_evaluator: ObjectiveEvaluator,
-        patch_generator: PatchGenerator,
-        patch_verifier: PatchVerifier,
-        release_manager: ReleaseManager,
-        iteration_store: IterationStore,
+        telemetry_collector: TelemetryCollectorLike,
+        objective_evaluator: ObjectiveEvaluatorLike,
+        patch_generator: PatchGeneratorLike,
+        patch_verifier: PatchVerifierLike,
+        release_manager: ReleaseManagerLike,
+        iteration_store: IterationStoreLike,
     ) -> None:
         self.telemetry_collector = telemetry_collector
         self.objective_evaluator = objective_evaluator
@@ -43,7 +85,7 @@ class ImprovementLoopEngine:
         self,
         *,
         iteration_id: str,
-        telemetry_inputs: dict,
+        telemetry_inputs: dict[str, Any],
         constraints: list[str],
         target_files: list[str],
         candidate_revision: str,
@@ -53,7 +95,7 @@ class ImprovementLoopEngine:
         snapshot = self.telemetry_collector.collect(**telemetry_inputs)
         fitness = self.objective_evaluator.evaluate(snapshot)
         proposal = self.patch_generator.propose_patch(snapshot, fitness, constraints, target_files)
-        verification = self.patch_verifier.verify()
+        verification = self.patch_verifier.verify(as_generated_patch(proposal))
         rollout = self.release_manager.decide(
             verification=verification,
             candidate_revision=candidate_revision,
