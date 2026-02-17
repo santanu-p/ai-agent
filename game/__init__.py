@@ -1,1 +1,1 @@
-"""Game simulation systems."""
+"""Game package."""

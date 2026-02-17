@@ -1,94 +1,83 @@
+"""Chunk load/unload orchestration based on player movement."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Dict, Iterable, Protocol, Set, Tuple
 
-from .entity_registry import ChunkEntities, EntityRegistry
 from .terrain_generator import TerrainChunk, TerrainGenerator
-from .world_state_store import ChunkCoord, WorldStateStore
+
+
+ChunkCoord = Tuple[int, int]
 
 
 class ChunkLifecycleHook(Protocol):
-    def on_chunk_pre_load(self, chunk: ChunkCoord) -> None: ...
+    """AI-facing chunk lifecycle hooks."""
 
-    def on_chunk_loaded(self, chunk: TerrainChunk, entities: ChunkEntities) -> None: ...
+    def on_chunk_loaded(self, chunk: TerrainChunk) -> None: ...
 
-    def on_chunk_pre_unload(self, chunk: ChunkCoord) -> None: ...
+    def apply_spawn_rules(self, chunk: TerrainChunk) -> None: ...
 
-    def on_chunk_unloaded(self, chunk: ChunkCoord) -> None: ...
+    def inject_quests(self, chunk: TerrainChunk) -> None: ...
+
+    def apply_balancing_adjustments(self, chunk: TerrainChunk) -> None: ...
+
+    def on_chunk_unloaded(self, chunk_coord: ChunkCoord) -> None: ...
 
 
 @dataclass
 class LoadedChunk:
+    coord: ChunkCoord
     terrain: TerrainChunk
-    entities: ChunkEntities
 
 
 class ChunkStreamer:
-    """Loads/unloads chunks from player position with lifecycle hooks for AI systems."""
+    """Streams chunks in/out around a player position."""
 
     def __init__(
         self,
         terrain_generator: TerrainGenerator,
-        entity_registry: EntityRegistry,
-        state_store: WorldStateStore,
-        view_distance: int = 2,
-    ):
+        view_distance_chunks: int = 2,
+        lifecycle_hooks: Iterable[ChunkLifecycleHook] = (),
+    ) -> None:
         self.terrain_generator = terrain_generator
-        self.entity_registry = entity_registry
-        self.state_store = state_store
-        self.view_distance = view_distance
-        self.loaded_chunks: dict[ChunkCoord, LoadedChunk] = {}
-        self.hooks: list[ChunkLifecycleHook] = []
+        self.view_distance_chunks = view_distance_chunks
+        self.lifecycle_hooks = list(lifecycle_hooks)
+        self.loaded_chunks: Dict[ChunkCoord, LoadedChunk] = {}
 
-    def register_hook(self, hook: ChunkLifecycleHook) -> None:
-        self.hooks.append(hook)
+    def update_player_position(self, world_x: float, world_y: float, chunk_size: int = 16) -> None:
+        player_chunk = (int(world_x // chunk_size), int(world_y // chunk_size))
+        target = self._chunk_window(player_chunk)
+        current: Set[ChunkCoord] = set(self.loaded_chunks.keys())
 
-    def update_player_position(self, player_x: int, player_y: int, chunk_size: int = 16) -> None:
-        center = (player_x // chunk_size, player_y // chunk_size)
-        wanted = self._visible_chunks(center)
-        loaded = set(self.loaded_chunks.keys())
+        to_load = sorted(target - current)
+        to_unload = sorted(current - target)
 
-        to_unload = loaded - wanted
-        to_load = wanted - loaded
+        for coord in to_load:
+            self._load_chunk(coord)
 
-        for chunk in sorted(to_unload):
-            self._unload_chunk(chunk)
+        for coord in to_unload:
+            self._unload_chunk(coord)
 
-        for chunk in sorted(to_load):
-            self._load_chunk(chunk)
-
-    def _visible_chunks(self, center: ChunkCoord) -> set[ChunkCoord]:
+    def _chunk_window(self, center: ChunkCoord) -> Set[ChunkCoord]:
         cx, cy = center
-        result: set[ChunkCoord] = set()
-        for x in range(cx - self.view_distance, cx + self.view_distance + 1):
-            for y in range(cy - self.view_distance, cy + self.view_distance + 1):
-                result.add((x, y))
-        return result
+        return {
+            (x, y)
+            for x in range(cx - self.view_distance_chunks, cx + self.view_distance_chunks + 1)
+            for y in range(cy - self.view_distance_chunks, cy + self.view_distance_chunks + 1)
+        }
 
-    def _load_chunk(self, chunk: ChunkCoord) -> None:
-        for hook in self.hooks:
-            hook.on_chunk_pre_load(chunk)
+    def _load_chunk(self, coord: ChunkCoord) -> None:
+        chunk = self.terrain_generator.generate_chunk(*coord)
+        self.loaded_chunks[coord] = LoadedChunk(coord=coord, terrain=chunk)
 
-        terrain = self.terrain_generator.generate_chunk(chunk)
-        entities = self.entity_registry.populate_chunk(terrain)
+        for hook in self.lifecycle_hooks:
+            hook.on_chunk_loaded(chunk)
+            hook.apply_spawn_rules(chunk)
+            hook.inject_quests(chunk)
+            hook.apply_balancing_adjustments(chunk)
 
-        self.loaded_chunks[chunk] = LoadedChunk(terrain=terrain, entities=entities)
-
-        for hook in self.hooks:
-            hook.on_chunk_loaded(terrain, entities)
-
-    def _unload_chunk(self, chunk: ChunkCoord) -> None:
-        for hook in self.hooks:
-            hook.on_chunk_pre_unload(chunk)
-
-        self.state_store.append_patch(
-            chunk=chunk,
-            operations=[{"op": "chunk_unloaded", "reason": "streaming_out"}],
-            author_system="chunk_streamer",
-            tags=("lifecycle",),
-        )
-        self.loaded_chunks.pop(chunk, None)
-
-        for hook in self.hooks:
-            hook.on_chunk_unloaded(chunk)
+    def _unload_chunk(self, coord: ChunkCoord) -> None:
+        self.loaded_chunks.pop(coord, None)
+        for hook in self.lifecycle_hooks:
+            hook.on_chunk_unloaded(coord)
