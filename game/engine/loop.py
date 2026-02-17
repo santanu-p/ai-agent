@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Iterable
 
 from game.ai.controllers import KeyboardAgentController, SimpleSelfImprovementPipeline
 from game.systems.save_system import load_game, save_game
@@ -9,7 +10,7 @@ from game.world.generator import FlatWorldGenerator
 from game.world.models import Player, Position
 
 
-def run_game_loop(save_path: Path = Path("savegame.json")) -> None:
+def run_game_loop(save_path: Path = Path("savegame.json"), command_script: Iterable[str] | None = None) -> None:
     world_generator = FlatWorldGenerator()
     controller = KeyboardAgentController()
     learning = SimpleSelfImprovementPipeline()
@@ -24,10 +25,20 @@ def run_game_loop(save_path: Path = Path("savegame.json")) -> None:
 
     print("Commands: w/a/s/d move, save, load, quit")
 
+    scripted_commands = iter(command_script) if command_script is not None else None
+
     while True:
         print("\nCamera view:")
         print(render_camera(world, player))
-        command = input("> ").strip().lower()
+        if scripted_commands is None:
+            command = input("> ").strip().lower()
+        else:
+            try:
+                command = next(scripted_commands).strip().lower()
+                print(f"> {command}")
+            except StopIteration:
+                print("Command script exhausted. Exiting sandbox.")
+                break
 
         if command == "quit":
             print("Exiting sandbox.")

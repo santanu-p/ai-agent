@@ -94,6 +94,18 @@ uvicorn app.main:app --reload --port 8103
 npm run -w apps/web-console dev
 ```
 
+### Google Colab / notebook mode
+
+If you run from a non-interactive notebook terminal (for example Google Colab), use the new scripted mode so the loop does not wait for keyboard input:
+
+```bash
+python main.py --colab --commands "d,d,s,a,save,quit"
+```
+
+- `--colab` enables scripted command execution.
+- `--commands` accepts a comma-separated command list (`w`, `a`, `s`, `d`, `save`, `load`, `quit`).
+- `--save-path` can still be used to choose where the save file is written.
+
 ## Running tests locally
 
 ### Control plane
