@@ -1,33 +1,27 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable
-
-from ai.governance.policy_constraints import RiskCategory
-from ai.governance.red_team_tests import RedTeamCategory
 
 from .iteration_store import IterationStore
-from .models import GeneratedPatch, GovernanceVerdict, MetricsSnapshot, ObjectiveScores, RolloutDecision, VerificationResults
-from .objective_evaluator import ObjectiveEvaluator
-from .patch_generator import PatchGenerator
-from .patch_verifier import PatchVerifier
-from .release_manager import ReleaseManager
-from .telemetry_collector import TelemetryCollector
+from .objective_evaluator import FitnessScore, ObjectiveEvaluator
+from .patch_generator import PatchGenerator, PatchProposal
+from .patch_verifier import PatchVerifier, VerificationResult
+from .release_manager import ReleaseManager, RolloutDecision
+from .telemetry_collector import MetricsSnapshot, TelemetryCollector
 
 
 @dataclass(slots=True)
 class ImprovementLoopResult:
     snapshot: MetricsSnapshot
-    fitness: ObjectiveScores
-    proposal: GeneratedPatch
-    verification: VerificationResults
-    governance: GovernanceVerdict
+    fitness: FitnessScore
+    proposal: PatchProposal
+    verification: VerificationResult
     rollout: RolloutDecision
     iteration_path: str
 
 
 class ImprovementLoopEngine:
-    """Coordinates telemetry -> objective -> patch -> verify -> governance -> rollout."""
+    """Coordinates telemetry -> objective -> patch -> verify -> rollout -> persist."""
 
     def __init__(
         self,
@@ -50,45 +44,27 @@ class ImprovementLoopEngine:
         *,
         iteration_id: str,
         telemetry_inputs: dict,
-        previous_stable_version: str,
-        declared_constraint_ids: Iterable[str],
-        risk_categories: Iterable[RiskCategory] = (),
-        human_approval_granted: bool = False,
-        red_team_scenario_ids: Iterable[str] = (),
-        red_team_categories: Iterable[RedTeamCategory] = (),
+        constraints: list[str],
+        target_files: list[str],
+        candidate_revision: str,
+        stable_revision: str,
+        requested_canary_fraction: float,
     ) -> ImprovementLoopResult:
         snapshot = self.telemetry_collector.collect(**telemetry_inputs)
         fitness = self.objective_evaluator.evaluate(snapshot)
-        proposal = self.patch_generator.generate(snapshot, fitness)
-        verification = self.patch_verifier.verify(proposal)
-
-        governance = self.release_manager.evaluate_governance(
-            retention_score=fitness.score_components.get("retention", 0.0),
-            challenge_score=fitness.score_components.get("progression", 0.0),
-            fairness_score=fitness.score_components.get("economy", 0.0),
-            performance_score=fitness.score_components.get("stability", 0.0),
-            p95_latency_ms=int(snapshot.extra.get("p95_latency_ms", 0)),
-            crash_rate_delta_pct=float(snapshot.extra.get("crash_rate_delta_pct", 0.0)),
-            economy_inflation_delta_pct=abs(snapshot.economy_inflation_index),
-            declared_constraint_ids=declared_constraint_ids,
-            risk_categories=risk_categories,
-            human_approval_granted=human_approval_granted,
-            red_team_scenario_ids=red_team_scenario_ids,
-            red_team_categories=red_team_categories,
-        )
-
+        proposal = self.patch_generator.propose_patch(snapshot, fitness, constraints, target_files)
+        verification = self.patch_verifier.verify()
         rollout = self.release_manager.decide(
-            fitness_score=fitness.overall_fitness,
             verification=verification,
-            previous_stable_version=previous_stable_version,
-            governance=governance,
+            candidate_revision=candidate_revision,
+            stable_revision=stable_revision,
+            requested_fraction=requested_canary_fraction,
         )
         iteration_path = self.iteration_store.store(
             iteration_id=iteration_id,
             snapshot=snapshot,
             proposal=proposal,
             verification=verification,
-            governance=governance,
             rollout=rollout,
         )
 
@@ -97,7 +73,6 @@ class ImprovementLoopEngine:
             fitness=fitness,
             proposal=proposal,
             verification=verification,
-            governance=governance,
             rollout=rollout,
             iteration_path=str(iteration_path),
         )
