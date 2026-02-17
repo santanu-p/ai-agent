@@ -1,163 +1,199 @@
 # Self-Improving Runtime Architecture
 
-## Goal
-Define a runtime architecture where an AI system can continuously improve gameplay while preserving engine integrity, determinism, and operational safety.
+## Purpose
+This document defines a runtime architecture that allows AI-authored gameplay updates while preserving safety, determinism, and operator control.
 
-## Layered Runtime Split
+---
+
+## Layer Split
 
 ### 1) Immutable Core Engine Layer
-The core engine is read-only at runtime and updated only through trusted human-reviewed releases.
+The **core engine** is read-only at runtime and may only be updated through a normal trusted release process.
 
-**Scope (examples):**
-- Rendering pipeline and asset streaming.
-- Physics simulation and collision system.
-- Save-game format and migration framework.
-- Networking protocol, replication model, and anti-cheat primitives.
+**Scope (non-exhaustive):**
+- Rendering pipeline
+- Physics simulation and collision system
+- Save format and serialization compatibility rules
+- Networking protocol and replication model
+- Input system, memory allocator, scheduler, and platform abstraction
 
 **Properties:**
-- Versioned independently as `core_version`.
-- Cryptographically signed binaries/assets.
-- No direct write path from AI systems.
-- Owns authoritative game state transitions for safety-critical systems.
+- Versioned independently (e.g., `engine_version = 2.4.1`)
+- No dynamic patching from AI outputs
+- Provides stable APIs/host functions to gameplay layer
 
 ---
 
 ### 2) Mutable AI-Authored Gameplay Layer
-AI can author and evolve gameplay logic and content under strict contracts.
+The **gameplay layer** is data + scripted logic that may be generated or tuned by AI and activated at runtime after validation.
 
-**Scope (examples):**
-- Quest templates and progression gates.
-- NPC behavior trees / utility rules.
-- Economy parameters (prices, sinks, drop rates).
-- Dialogue graphs and localization-ready strings.
-- Procedural content rules (spawn tables, encounter composition, map modifiers).
+**Scope (non-exhaustive):**
+- Quest definitions, branching objectives, and rewards
+- NPC behavior trees/state machines and dialogue policies
+- Economy parameters (prices, drop rates, sinks/sources)
+- Dialogue content and localization-ready text assets
+- Procedural content rules (spawn tables, generation constraints)
 
 **Properties:**
-- Packaged as signed, versioned "patch bundles".
-- Data-driven first; script support allowed only inside sandbox.
-- Activated per environment (dev/stage/prod) with canary rollout.
-- Fully reversible to a previous known-good version.
+- Delivered as signed patch bundles (e.g., `patch_id`, `parent_patch_id`, manifest)
+- Strictly bound to schema and sandbox constraints
+- Can be rolled forward/backward without modifying engine binaries
 
 ---
 
 ### 3) Sandboxed Execution Boundary
-All AI-generated executable logic runs in an isolated runtime (e.g., WASM or Lua sandbox) with explicit host bindings.
+All AI-generated executable logic runs inside a **sandbox VM** (e.g., WASM or Lua sandbox).
 
 **Hard restrictions:**
-- No direct filesystem access.
-- No direct network/socket access.
-- No process/thread spawning outside approved scheduler APIs.
-- No arbitrary native FFI.
+- No direct filesystem access
+- No direct network socket access
+- No process/thread spawning or shell execution
+- No arbitrary native FFI
 
-**Allowed capabilities (via host API):**
-- Read-only access to whitelisted gameplay context.
-- Emitting intent messages/events to core engine.
-- Deterministic RNG service.
-- Bounded CPU/memory/time budgets.
+**Allowed interactions:**
+- Host-provided deterministic API surface only (e.g., query entity state, enqueue gameplay events, request RNG from deterministic source)
+- Bounded memory, instruction/time budgets, and per-tick quotas
 
-**Enforcement controls:**
-- Capability-based API surface (deny-by-default).
-- Per-script resource quotas and watchdog timeouts.
-- Determinism checks in lockstep/networked contexts.
-- Structured audit logging for every sandbox invocation.
+**Enforcement mechanisms:**
+- Capability-based host function exports
+- Runtime fuel metering / instruction counters
+- Wall-clock watchdog timeouts
+- Memory limits and object count caps
+- Structured logs for every sandbox fault/termination
+
+---
 
 ## Explicit Contracts
 
-### A) Data Schemas for AI Outputs
-All AI-authored artifacts must conform to machine-validated schemas.
+## A) Data Schemas for AI Outputs
+All AI outputs must conform to versioned schemas.
 
-**Required metadata envelope:**
-- `patch_id` (globally unique, immutable).
-- `base_patch_id` (parent lineage for diff/rollback).
-- `target_core_version` (compatibility pin).
-- `schema_version` (for parser evolution).
-- `author` (`ai/<model-id>` plus optional human approver).
-- `created_at` (UTC timestamp).
-- `content_hash` (integrity checksum).
-- `signature` (signing authority).
+### Contract envelope
+```json
+{
+  "schema_version": "1.0.0",
+  "patch_id": "patch-2026-02-16-001",
+  "parent_patch_id": "patch-2026-02-15-019",
+  "created_at": "2026-02-16T10:23:00Z",
+  "engine_compat": ">=2.4.0 <2.5.0",
+  "author": { "type": "ai", "model": "...", "run_id": "..." },
+  "content": {
+    "quests": [],
+    "npc_behaviors": [],
+    "economy_tuning": {},
+    "dialogue": [],
+    "procgen_rules": [],
+    "scripts": []
+  },
+  "signature": "base64-ed25519-signature"
+}
+```
 
-**Artifact schema groups:**
-1. `quest_bundle.schema.json`
-   - Objective graph, prerequisites, rewards, fail states.
-2. `npc_behavior.schema.json`
-   - States, transitions, utility curves, action constraints.
-3. `economy_tuning.schema.json`
-   - Parameter ranges, confidence bands, max delta per rollout.
-4. `dialogue_graph.schema.json`
-   - Nodes, branches, tags, safety filters, fallback lines.
-5. `procgen_rules.schema.json`
-   - Rule weights, biome constraints, rarity budgets, exclusion sets.
+### Schema requirements
+- JSON Schema (or Protobuf/FlatBuffers with equivalent strict validation) must be versioned and immutable after publication.
+- Unknown fields are rejected (or explicitly quarantined under `extensions`).
+- Each domain object has:
+  - Stable ID
+  - Semantic version
+  - Deterministic constraints (bounds, enums, references)
+  - Optional migration hints from prior versions
 
-**Contract rules:**
-- Reject unknown top-level fields unless explicitly marked extensible.
-- Strong typing for numeric ranges and enums.
-- Referential integrity across IDs (e.g., quest reward item IDs must exist).
-- Backward compatibility policy by `schema_version`.
+### Example domain constraints
+- Economy multipliers in bounded range (e.g., `0.25..4.0`)
+- NPC action graphs must be acyclic where required
+- Dialogue tokens must pass profanity/safety filters and localization placeholders validation
+- Procedural rules must include hard caps (spawn counts, area density, recursion depth)
 
-### B) Validation Pipeline Before Activation
-No AI patch can become active without passing all validation stages.
+---
 
-1. **Schema Validation**
-   - JSON/bytecode shape validation against current schemas.
-2. **Static Safety Checks**
-   - Forbidden API detection, opcode/AST linting, dependency allowlist.
-3. **Semantic Validation**
-   - Domain rules (e.g., no negative currency generation exploit paths).
-4. **Simulation & Regression**
-   - Run deterministic test scenarios and gameplay simulations.
-5. **Performance & Budget Checks**
-   - CPU, memory, and latency budgets in sandbox stress tests.
-6. **Canary Rollout**
-   - Activate for a small shard/cohort; monitor SLOs and gameplay KPIs.
-7. **Promotion Gate**
-   - Automatic or human-in-the-loop approval based on policy.
+## B) Validation Pipeline Before Activation
+No patch is activated directly from generation output. Activation requires passing every stage below:
 
-**Activation requirement:**
-- Patch transitions to `ACTIVE` only after all stages pass and signed promotion token is issued.
+1. **Integrity & authenticity checks**
+   - Verify bundle hash and signature
+   - Verify `parent_patch_id` lineage and monotonic version policy
 
-### C) Rollback Mechanism with Version IDs
-Runtime must support immediate and deterministic rollback.
+2. **Schema and compatibility validation**
+   - Validate against exact `schema_version`
+   - Check `engine_compat` against current immutable engine version
 
-**Version model:**
-- `core_version` for immutable engine.
-- `patch_id` for each gameplay patch.
-- `release_channel` (dev/stage/prod).
-- `active_set` = ordered list of active `patch_id`s per channel.
+3. **Static safety checks**
+   - Script bytecode/module inspection (imports, forbidden opcodes/APIs)
+   - Content policy linting (toxicity, banned terms, unsafe prompts)
+   - Referential integrity checks across quests/NPC/items
 
-**Rollback behavior:**
-- Maintain append-only patch ledger with status transitions: `CREATED -> VALIDATED -> CANARY -> ACTIVE -> REVOKED`.
-- Rollback by atomically switching `active_set` to prior snapshot (`rollback_to_patch_id` or snapshot ID).
-- Preserve save compatibility through migration guards; block rollback if irreversible data mutation is detected unless explicit override policy exists.
-- Emit rollback event with reason code and operator/automation identity.
+4. **Determinism and budget checks**
+   - Execute deterministic replay tests using fixed seeds
+   - Verify performance budgets (tick time, memory, allocation counts)
 
-### D) Runtime Kill-Switch for New AI Patches
-Provide an immediate control to stop introduction of new AI-authored changes.
+5. **Simulation and canary stage**
+   - Run in isolated shadow simulation or canary shard
+   - Monitor regressions: crash rate, economy drift, quest completion anomalies
 
-**Kill-switch controls:**
-- `ai_patch_intake_enabled` (accept new generated patches).
-- `ai_patch_activation_enabled` (allow promotion to active).
-- `ai_patch_execution_enabled` (execute sandbox scripts from mutable layer).
+6. **Policy gate + activation**
+   - Require policy decision (`auto` threshold or human approval)
+   - Activate atomically with version pointer switch
 
-**Operational semantics:**
-- Kill-switch is globally replicated and strongly consistent.
-- Changes require authenticated operator identity and are audit logged.
-- Disabling intake/activation does not necessarily disable already-active safe patches.
-- Emergency mode can force fallback to immutable baseline patch set only.
+If any stage fails, patch status is set to `rejected` with machine-readable reasons.
 
-## Recommended Runtime Flow
-1. AI generates candidate gameplay patch bundle.
-2. Bundle is signed, stored, and assigned `patch_id`.
-3. Validation pipeline executes and records evidence.
-4. Canary activation occurs if policy permits.
-5. Patch is promoted to `ACTIVE` or automatically rolled back.
-6. Kill-switch can halt future patching at any point.
+---
 
-## Minimal API Surface (Illustrative)
-- `submitPatch(bundle) -> patch_id`
-- `validatePatch(patch_id) -> validation_report`
-- `activatePatch(patch_id, channel) -> activation_id`
-- `rollback(channel, target_snapshot_id) -> rollback_id`
-- `setKillSwitch(flags) -> switch_version`
-- `getRuntimeState() -> { core_version, active_set, kill_switch_flags }`
+## C) Rollback Mechanism with Version IDs
+Runtime tracks active gameplay versions via immutable IDs.
 
-This split ensures the system can evolve rapidly in gameplay quality while keeping engine trust boundaries, operational control, and player safety intact.
+### Required version metadata
+- `patch_id` (current)
+- `parent_patch_id` (lineage)
+- `activated_at`
+- `activation_scope` (global, shard, cohort)
+- `rollback_target_id`
+
+### Rollback behavior
+- Maintain an append-only activation ledger.
+- Store prior N known-good patch bundles locally (and in durable remote storage).
+- Rollback is a single atomic pointer update to prior known-good `patch_id`.
+- Existing in-flight sessions:
+  - Option A: sticky to old patch until session boundary
+  - Option B: migrate using declared migration rules and compatibility checks
+- Rollback event emits audit logs and operator alert.
+
+### SLO target
+- Recovery objective: rollback command to full effect in < 60 seconds for all online shards.
+
+---
+
+## D) Runtime Kill-Switch for New AI Patches
+Provide a kill-switch that disables activation of newly generated/received AI patches without stopping the game service.
+
+### Kill-switch requirements
+- Global flag (e.g., `ai_patch_ingest_enabled=false`) configurable at runtime.
+- When off:
+  - New patch ingestion/activation is blocked.
+  - Last active approved patch remains running.
+  - Validation jobs may continue in dry-run mode (optional).
+- Accessible via:
+  - Secure admin API
+  - Ops console control
+  - Emergency config override at process start
+- Changes must be audited with actor identity, timestamp, and reason.
+
+### Fail-safe defaults
+- On control-plane outage or config inconsistency, default to **deny new patch activation**.
+- Manual override requires privileged role and MFA-backed action path.
+
+---
+
+## Recommended Operational Model
+- Treat AI patching as **content deployment**, not engine deployment.
+- Use staged rollout percentages (1% → 10% → 50% → 100%).
+- Continuously monitor KPIs tied to gameplay integrity and player safety.
+- Auto-rollback on threshold breaches (crash rate, economy inflation, moderation incidents).
+
+## Minimal Runtime State Machine
+`draft -> validated -> canary -> approved -> active -> superseded`
+
+Terminal states:
+- `rejected`
+- `rolled_back`
+
+Each transition must be logged with actor, reason, and evidence links.
