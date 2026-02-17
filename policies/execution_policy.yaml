@@ -1,0 +1,30 @@
+version: 1
+execution_policy:
+  writable_paths:
+    allow:
+      - game/ai/**
+      - logs/**
+      - policies/**
+      - tmp/**
+    deny:
+      - .git/**
+      - secrets/**
+      - /etc/**
+      - /root/**
+  network:
+    allow:
+      - api.github.com
+      - pypi.org
+      - files.pythonhosted.org
+      - localhost
+      - 127.0.0.1
+    deny:
+      - "*"
+  resources:
+    max_cpu_percent: 75
+    max_ram_mb: 4096
+    max_runtime_seconds: 900
+  circuit_breakers:
+    max_failed_deployments: 3
+    max_regression_threshold: 0.2
+    emergency_disable_file: .autonomy_disabled
