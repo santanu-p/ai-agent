@@ -38,7 +38,20 @@ export const AgentExecuteSchema = z.object({
 });
 
 export const PolicySimulationSchema = z.object({
-  policy_patch: z.string().min(1),
+  policy_patch: z.object({
+    summary: z.string().min(3),
+    asserted_constraint_ids: z.array(z.string()).default([]),
+    objective_impacts: z
+      .object({
+        fairness: z.number().min(-1).max(1).optional(),
+        latency: z.number().min(-1).max(1).optional(),
+        exploit_risk: z.number().min(-1).max(1).optional(),
+        economy_stability: z.number().min(-1).max(1).optional(),
+        reliability: z.number().min(-1).max(1).optional()
+      })
+      .default({}),
+    risk_categories: z.array(z.string()).optional()
+  }),
   traces: z.array(
     z.object({
       trace_id: z.string(),
