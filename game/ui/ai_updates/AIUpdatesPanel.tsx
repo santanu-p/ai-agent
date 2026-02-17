@@ -30,9 +30,8 @@ export function AIUpdatesPanel({
   useEffect(() => {
     telemetry.emit(AI_UPDATE_TELEMETRY_EVENTS.panelViewed, {
       updateId: metadata.id,
-      mode,
     });
-  }, [metadata.id, mode, telemetry]);
+  }, [metadata.id, telemetry]);
 
   const onModeChange = (nextMode: UpdateMode): void => {
     setMode(nextMode);
