@@ -1,4 +1,2 @@
 __pycache__/
-*.pyc
-.pytest_cache/
-.ai_policy/
+*.py[cod]

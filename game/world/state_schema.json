@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aegisworld.local/schemas/world-state-v2.json",
+  "title": "World State",
+  "type": "object",
+  "required": ["world_id", "tick", "entities", "metadata", "version"],
+  "properties": {
+    "world_id": {"type": "string"},
+    "tick": {"type": "integer", "minimum": 0},
+    "entities": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["entity_id", "kind", "attributes", "version"],
+        "properties": {
+          "entity_id": {"type": "string"},
+          "kind": {"type": "string"},
+          "attributes": {"type": "object"},
+          "version": {"type": "integer", "const": 2}
+        },
+        "additionalProperties": false
+      }
+    },
+    "metadata": {"type": "object"},
+    "version": {"type": "integer", "const": 2}
+  },
+  "additionalProperties": false
+}
