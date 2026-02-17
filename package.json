@@ -1,0 +1,15 @@
+{
+  "name": "aegisworld",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/control-plane",
+    "apps/web-console"
+  ],
+  "scripts": {
+    "build": "npm run -w apps/control-plane build && npm run -w apps/web-console build",
+    "dev": "npm run -w apps/control-plane dev",
+    "lint": "npm run -w apps/control-plane lint && npm run -w apps/web-console lint"
+  }
+}
+

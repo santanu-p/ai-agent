@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: control-plane
+  namespace: aegisworld
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: control-plane
+  template:
+    metadata:
+      labels:
+        app: control-plane
+    spec:
+      containers:
+        - name: control-plane
+          image: ghcr.io/aegisworld/control-plane:latest
+          ports:
+            - containerPort: 8100
+          env:
+            - name: PORT
+              value: "8100"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: control-plane
+  namespace: aegisworld
+spec:
+  selector:
+    app: control-plane
+  ports:
+    - port: 8100
+      targetPort: 8100
+

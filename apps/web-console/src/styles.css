@@ -1,0 +1,67 @@
+:root {
+  font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+  color: #0b1c2e;
+  background: radial-gradient(circle at top left, #dbe8ff, #f5f8ff 40%, #eef3ff 100%);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+.layout {
+  margin: 0 auto;
+  padding: 2rem;
+  max-width: 1000px;
+  display: grid;
+  gap: 1rem;
+}
+
+.panel {
+  background: #ffffffcc;
+  border: 1px solid #c5d3ea;
+  border-radius: 10px;
+  padding: 1rem;
+}
+
+.inline {
+  margin: 0.75rem 0;
+  display: flex;
+  gap: 0.5rem;
+}
+
+input {
+  width: 100%;
+  border: 1px solid #9ab1d3;
+  border-radius: 8px;
+  padding: 0.5rem;
+}
+
+button {
+  border: 0;
+  border-radius: 8px;
+  padding: 0.5rem 0.75rem;
+  background: #184a8c;
+  color: #fff;
+  cursor: pointer;
+}
+
+pre {
+  padding: 0.75rem;
+  border-radius: 8px;
+  background: #f4f7fd;
+  border: 1px solid #dce6f7;
+  overflow: auto;
+}
+
+.error {
+  background: #ffe4e4;
+  color: #8c1616;
+  border: 1px solid #f5b5b5;
+  padding: 0.75rem;
+  border-radius: 8px;
+}
+

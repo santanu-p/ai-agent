@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: learning-plane
+  namespace: aegisworld
+spec:
+  replicas: 6
+  selector:
+    matchLabels:
+      app: learning-plane
+  template:
+    metadata:
+      labels:
+        app: learning-plane
+    spec:
+      containers:
+        - name: learning-plane
+          image: ghcr.io/aegisworld/learning-plane:latest
+          ports:
+            - containerPort: 8102
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: learning-plane
+  namespace: aegisworld
+spec:
+  selector:
+    app: learning-plane
+  ports:
+    - port: 8102
+      targetPort: 8102
+

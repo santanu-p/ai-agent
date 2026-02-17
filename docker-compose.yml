@@ -1,0 +1,41 @@
+version: "3.9"
+services:
+  control-plane:
+    build:
+      context: ./apps/control-plane
+      dockerfile: Dockerfile
+    ports:
+      - "8100:8100"
+    environment:
+      PORT: "8100"
+
+  runtime-plane:
+    build:
+      context: ./services/runtime-plane
+      dockerfile: Dockerfile
+    ports:
+      - "8101:8101"
+
+  learning-plane:
+    build:
+      context: ./services/learning-plane
+      dockerfile: Dockerfile
+    ports:
+      - "8102:8102"
+
+  security-plane:
+    build:
+      context: ./services/security-plane
+      dockerfile: Dockerfile
+    ports:
+      - "8103:8103"
+
+  web-console:
+    build:
+      context: ./apps/web-console
+      dockerfile: Dockerfile
+    ports:
+      - "5173:5173"
+    environment:
+      VITE_CONTROL_PLANE_URL: "http://localhost:8100"
+

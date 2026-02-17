@@ -1,0 +1,264 @@
+openapi: 3.1.0
+info:
+  title: AegisWorld Control Plane API
+  version: 0.1.0
+servers:
+  - url: http://localhost:8100
+paths:
+  /v1/goals:
+    post:
+      summary: Create autonomous objective run
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GoalSpec'
+      responses:
+        "201":
+          description: Goal run created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GoalRun'
+  /v1/goals/{goalId}:
+    get:
+      summary: Get goal run details
+      parameters:
+        - in: path
+          name: goalId
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Goal run response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GoalRun'
+  /v1/agents:
+    post:
+      summary: Create agent profile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgentProfileInput'
+      responses:
+        "201":
+          description: Agent created
+  /v1/agents/{agentId}/execute:
+    post:
+      summary: Execute task under policy envelope
+      parameters:
+        - in: path
+          name: agentId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                intent:
+                  type: string
+                goal_id:
+                  type: string
+                policy:
+                  $ref: '#/components/schemas/ExecutionPolicy'
+      responses:
+        "200":
+          description: Execution accepted
+  /v1/agents/{agentId}/memory:
+    get:
+      summary: Retrieve agent memory
+      parameters:
+        - in: path
+          name: agentId
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Memory entries
+  /v1/domain/social/projects:
+    post:
+      summary: Start social domain workflow
+      responses:
+        "201":
+          description: Scheduled
+  /v1/domain/games/projects:
+    post:
+      summary: Start games domain workflow
+      responses:
+        "201":
+          description: Scheduled
+  /v1/domain/dev/pipelines:
+    post:
+      summary: Start dev domain pipeline
+      responses:
+        "201":
+          description: Queued
+  /v1/incidents:
+    get:
+      summary: List security incidents
+      responses:
+        "200":
+          description: Incident list
+  /v1/policies/simulate:
+    post:
+      summary: Simulate policy patch against traces
+      responses:
+        "200":
+          description: Policy simulation result
+  /v1/deployments/changesets:
+    post:
+      summary: Create autonomous changeset and evaluate canary
+      responses:
+        "201":
+          description: Changeset staged
+    get:
+      summary: List autonomous changesets
+      responses:
+        "200":
+          description: Changeset list
+  /v1/deployments/changesets/{changeId}/promote:
+    post:
+      summary: Promote changeset after canary
+      parameters:
+        - in: path
+          name: changeId
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Promotion state
+components:
+  schemas:
+    GoalSpec:
+      type: object
+      required:
+        - goal_id
+        - intent
+        - budget
+        - deadline
+        - risk_tolerance
+        - domains
+      properties:
+        goal_id:
+          type: string
+          format: uuid
+        intent:
+          type: string
+        constraints:
+          type: array
+          items:
+            type: string
+        budget:
+          type: number
+        deadline:
+          type: string
+          format: date-time
+        risk_tolerance:
+          type: string
+          enum: [low, medium, high]
+        domains:
+          type: array
+          items:
+            type: string
+            enum: [social, dev, games]
+    ExecutionPolicy:
+      type: object
+      required:
+        - tool_allowances
+        - resource_limits
+        - network_scope
+        - data_scope
+        - rollback_policy
+      properties:
+        tool_allowances:
+          type: array
+          items:
+            type: string
+        resource_limits:
+          type: object
+          additionalProperties: true
+        network_scope:
+          type: string
+          enum: [internal, internet]
+        data_scope:
+          type: string
+          enum: [restricted, standard, broad]
+        rollback_policy:
+          type: string
+          enum: [never, on_failure, always]
+    TaskTrace:
+      type: object
+      properties:
+        trace_id:
+          type: string
+        goal_id:
+          type: string
+        steps:
+          type: array
+          items:
+            type: string
+        tool_calls:
+          type: array
+          items:
+            type: string
+        model_calls:
+          type: array
+          items:
+            type: string
+        latency_ms:
+          type: integer
+        token_cost:
+          type: number
+        outcome:
+          type: string
+    GoalRun:
+      type: object
+      properties:
+        goal_id:
+          type: string
+        status:
+          type: string
+        risk_score:
+          type: number
+        estimated_cost:
+          type: number
+        traces:
+          type: array
+          items:
+            $ref: '#/components/schemas/TaskTrace'
+        created_at:
+          type: string
+        updated_at:
+          type: string
+    AgentProfileInput:
+      type: object
+      required:
+        - agent_id
+        - name
+        - domains
+      properties:
+        agent_id:
+          type: string
+        name:
+          type: string
+        capabilities:
+          type: array
+          items:
+            type: string
+        domains:
+          type: array
+          items:
+            type: string
+            enum: [social, dev, games]
