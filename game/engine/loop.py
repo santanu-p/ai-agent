@@ -1,76 +1,52 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Dict
+from pathlib import Path
 
-from game.ai.controller import KeyboardAgentController
-from game.ai.improvement import NoOpSelfImprovementPipeline
-from game.engine.interfaces import IWorldGenerator
-from game.systems.persistence import SaveLoadSystem
-from game.ui.render import ConsoleRenderer
+from game.ai.controllers import KeyboardAgentController, SimpleSelfImprovementPipeline
+from game.systems.save_system import load_game, save_game
+from game.ui.camera import render_camera
+from game.world.generator import FlatWorldGenerator
+from game.world.models import Player, Position
 
 
-@dataclass
-class SandboxGame:
-    world_generator: IWorldGenerator
-    controller: KeyboardAgentController
-    renderer: ConsoleRenderer
-    persistence: SaveLoadSystem
-    self_improvement: NoOpSelfImprovementPipeline
+def run_game_loop(save_path: Path = Path("savegame.json")) -> None:
+    world_generator = FlatWorldGenerator()
+    controller = KeyboardAgentController()
+    learning = SimpleSelfImprovementPipeline()
 
-    def _spawn_player(self, world: Dict) -> Dict[str, int]:
-        width = world["size"]["width"]
-        height = world["size"]["height"]
-        return {"x": width // 2, "y": height // 2}
+    if save_path.exists():
+        world, player = load_game(save_path)
+        print(f"Loaded world '{world.name}' from {save_path}.")
+    else:
+        world = world_generator.generate(name="sandbox", seed=42)
+        player = Player(name="player-1", position=Position(x=world.width // 2, y=world.height // 2))
+        print(f"World '{world.name}' loaded. Player spawned at ({player.position.x}, {player.position.y}).")
 
-    def _move_player(self, state: Dict, action: str) -> None:
-        offsets = {"w": (0, -1), "s": (0, 1), "a": (-1, 0), "d": (1, 0)}
-        if action not in offsets:
-            return
+    print("Commands: w/a/s/d move, save, load, quit")
 
-        dx, dy = offsets[action]
-        width = state["world"]["size"]["width"]
-        height = state["world"]["size"]["height"]
+    while True:
+        print("\nCamera view:")
+        print(render_camera(world, player))
+        command = input("> ").strip().lower()
 
-        nx = max(0, min(width - 1, state["player"]["x"] + dx))
-        ny = max(0, min(height - 1, state["player"]["y"] + dy))
-
-        if state["world"]["tiles"][ny][nx] != "#":
-            state["player"]["x"] = nx
-            state["player"]["y"] = ny
-            state["moves"] += 1
-
-    def _update_camera(self, state: Dict) -> None:
-        state["camera"]["x"] = state["player"]["x"]
-        state["camera"]["y"] = state["player"]["y"]
-
-    def run(self, seed: int | None = 42) -> None:
-        world = self.world_generator.generate(seed=seed)
-        state = {
-            "world": world,
-            "player": self._spawn_player(world),
-            "camera": {"x": 0, "y": 0},
-            "moves": 0,
-        }
-        self._update_camera(state)
-
-        print("World loaded. Player spawned. Enter commands to play.")
-        running = True
-        while running:
-            self.renderer.draw(state)
-            action = self.controller.next_action(state)
-
-            if action == "quit":
-                running = False
-            elif action == "save":
-                self.persistence.save(state)
-                print("Game saved.")
-            elif action == "load":
-                state = self.persistence.load()
-                print("Game loaded.")
+        if command == "quit":
+            print("Exiting sandbox.")
+            break
+        if command == "save":
+            save_game(world, player, save_path)
+            print(f"Saved to {save_path}.")
+            continue
+        if command == "load":
+            if save_path.exists():
+                world, player = load_game(save_path)
+                print(f"Loaded from {save_path}.")
             else:
-                self._move_player(state, action)
-                self._update_camera(state)
+                print("No save file found.")
+            continue
 
-        report = self.self_improvement.run_cycle({"moves": state["moves"]})
-        print(f"Session ended: {report['note']}")
+        dx, dy = controller.decide(player, world, command)
+        player.position.move(dx, dy)
+        world.clamp(player.position)
+        learning.record_tick(command, (player.position.x, player.position.y))
+        learning.run_cycle()
+        print(f"Player at ({player.position.x}, {player.position.y})")

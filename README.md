@@ -1,15 +1,16 @@
-# AI Agent Sandbox Game Prototype
+# Local Sandbox Game Prototype
 
-Minimal local single-player sandbox scaffold with an interactive loop.
+Minimal single-player sandbox scaffold with world generation, player movement/camera, and save/load flow.
 
 ## Project Structure
 
-- `game/engine/` - core loop and interfaces.
-- `game/world/` - world generation/loading logic.
-- `game/ai/` - input controller and self-improvement pipeline placeholder.
-- `game/systems/` - persistence (save/load).
-- `game/ui/` - console rendering.
-- `server/` - future server/multiplayer module.
+- `game/engine/` - main game loop orchestration
+- `game/world/` - world models + generation interface/implementation
+- `game/ai/` - agent and self-improvement interfaces + minimal implementations
+- `game/systems/` - save/load systems
+- `game/ui/` - camera rendering
+- `server/` - optional local HTTP server scaffold
+- `main.py` - sandbox entrypoint
 
 ## Setup
 
@@ -17,7 +18,7 @@ Minimal local single-player sandbox scaffold with an interactive loop.
 python3 --version
 ```
 
-No third-party dependencies are required.
+No external dependencies are required.
 
 ## Run
 
@@ -25,20 +26,39 @@ No third-party dependencies are required.
 python3 main.py
 ```
 
-Controls in game:
-- `w`, `a`, `s`, `d`: move player
-- `save`: save current world state to `savegame.json`
-- `load`: load from `savegame.json`
-- `quit`: end session
+Controls in-game:
+- `w/a/s/d` move player
+- `save` write `savegame.json`
+- `load` read `savegame.json`
+- `quit` exit loop
 
-## Architecture
+## Optional health server
 
-```mermaid
-flowchart TD
-    A[main.py] --> B[SandboxGame loop]
-    B --> C[IWorldGenerator -> FlatWorldGenerator]
-    B --> D[IAgentController -> KeyboardAgentController]
-    B --> E[ConsoleRenderer]
-    B --> F[SaveLoadSystem]
-    B --> G[ISelfImprovementPipeline -> NoOpSelfImprovementPipeline]
+```bash
+python3 -m server.local_server
+# then open http://127.0.0.1:8000/health
+```
+
+## Architecture Diagram
+
+```text
++--------------------+
+|      main.py       |
+|  (entrypoint)      |
++---------+----------+
+          |
+          v
++--------------------+      +----------------------+
+| game.engine.loop   +----->+ game.world.generator |
+| run_game_loop()    |      | IWorldGenerator      |
++----+---------+-----+      +----------------------+
+     |         |
+     |         +------------> game.ai.controllers
+     |                      (IAgentController,
+     |                       ISelfImprovementPipeline)
+     |
+     +---------------------> game.ui.camera
+     |
+     +---------------------> game.systems.save_system
+
 ```
