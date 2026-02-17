@@ -31,8 +31,7 @@ class AegisWorldHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         payload = read_json(self)
-        parsed = urlparse(self.path)
-        path = parsed.path
+        path = self.path
 
         try:
             if path == "/v1/goals":
@@ -46,9 +45,14 @@ class AegisWorldHandler(BaseHTTPRequestHandler):
                 goal_id = payload["goal_id"]
                 self._send(HTTPStatus.OK, service.execute(agent_id=agent_id, goal_id=goal_id))
                 return
-            if path.startswith("/v1/agents/") and path.endswith("/policy"):
-                agent_id = path.split("/")[3]
-                self._send(HTTPStatus.OK, service.update_agent_policy(agent_id, payload))
+            if path == "/v1/autonomy/tick":
+                self._send(
+                    HTTPStatus.OK,
+                    service.autonomous_tick(
+                        agent_id=payload.get("agent_id"),
+                        max_goals=int(payload.get("max_goals", 5)),
+                    ),
+                )
                 return
             if path == "/v1/domain/social/projects":
                 self._send(HTTPStatus.CREATED, service.create_domain_project("social", payload))
@@ -62,14 +66,8 @@ class AegisWorldHandler(BaseHTTPRequestHandler):
             if path == "/v1/policies/simulate":
                 self._send(HTTPStatus.OK, service.simulate_policy(payload))
                 return
-            if path == "/v1/scheduler/assign":
-                self._send(HTTPStatus.OK, service.assign_goal(payload))
-                return
-            if path == "/v1/scheduler/run":
-                max_runs = int(payload.get("max_runs", 10))
-                self._send(HTTPStatus.OK, service.run_scheduler(max_runs=max_runs))
-                return
-            if path == "/v1/learning/compact":
+            if path.startswith("/v1/learning/compact"):
+                parsed = urlparse(path)
                 params = parse_qs(parsed.query)
                 agent_id = payload.get("agent_id") or params.get("agent_id", [None])[0]
                 if not agent_id:
@@ -137,16 +135,12 @@ class AegisWorldHandler(BaseHTTPRequestHandler):
             self._send(HTTPStatus.OK, {"changes": service.list_changes()})
             return
 
-        if path == "/v1/scheduler/queue":
-            self._send(HTTPStatus.OK, {"queue": service.get_queue()})
-            return
-
         if path == "/v1/learning/summary":
             self._send(HTTPStatus.OK, service.learning_summary())
             return
 
-        if path == "/v1/stats":
-            self._send(HTTPStatus.OK, service.stats())
+        if path == "/v1/metrics":
+            self._send(HTTPStatus.OK, service.metrics())
             return
 
         self._send(HTTPStatus.NOT_FOUND, {"error": "not found"})

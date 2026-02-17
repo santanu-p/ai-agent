@@ -98,42 +98,6 @@ Human involvement is limited to **goal specification and policy envelope definit
 - Policy tuning
 - Benchmark evaluation
 
-##### Learning Plane — Game Evolution
-
-To support autonomous game-world evolution in the Games domain, the Learning Plane adds a dedicated closed-loop pipeline that links `ReflectionRecord` diagnostics, `AutonomousChangeSet` packaging, and `Testing and Acceptance` gate outcomes.
-
-**Telemetry Inputs**
-- Player progression funnels
-- Quest abandonment rates and dropout loci
-- Combat death distributions
-- Economy inflation and sink/source imbalance
-- Server performance saturation signals
-
-**Mutation Targets**
-- NPC behavior policies
-- Spawn rates and encounter density curves
-- Quest tuning parameters (difficulty/reward pacing)
-- Economy coefficients (drop rates, sink multipliers, pricing)
-- Map event frequency schedules
-
-**Validation Stages**
-1. Offline simulation against historical and synthetic cohorts
-2. Canary shard rollout with bounded blast radius
-3. Explicit rollback criteria tied to stability and fairness regressions
-4. Progression integrity checks to prevent invalid advancement states
-
-**Immutable Constraints**
-- Never delete or invalidate active player inventory or active quests
-- Preserve save compatibility schema across all world mutations
-
-**Approval Mode**
-- Fully autonomous approval is allowed only for low-risk parameter changes
-- High-risk structural world changes must pass a policy simulation gate before promotion
-
-**Rollback Artifacts and Recovery SLA**
-- Every world rebuild attempt must emit rollback artifacts: state diff manifests, migration journals, and replay checkpoints
-- Failed rebuilds must satisfy recovery SLA targets with deterministic restore workflows and auditable incident records
-
 #### Security Plane (Python + Native Cloud)
 - Threat detection (GuardDuty, WAF, audit logs)
 - Incident graph construction
@@ -147,43 +111,6 @@ To support autonomous game-world evolution in the Games domain, the Learning Pla
 - OpenSearch (telemetry)
 - pgvector (long-term memory embeddings)
 - Kinesis (event streaming)
-
-### 4.2 Games Runtime Architecture (Open-World MVP)
-
-#### Runtime Stack and Deployment
-- **Engine/runtime strategy**: Unreal Engine 5 client + authoritative simulation services on Runtime Plane.
-- **Execution model**:
-  - Client: rendering, input, prediction, local animation.
-  - Server: authoritative world state, combat resolution, quest progression, economy writes.
-- **Service boundaries**:
-  - World State Service (authoritative sector state)
-  - Quest Service (quest graph, progression rules, reward commits)
-  - NPC Director Service (behavior policy execution and faction orchestration)
-  - Economy Service (prices, drops, sinks/sources, anti-inflation controls)
-
-#### World Partitioning and Streaming
-- World is partitioned into fixed-size sectors with hierarchical LOD tiles.
-- Sector activation is driven by player position + activity heatmap; nearby sectors are preloaded.
-- Cold sectors are snapshotted and unloaded using deterministic serialization.
-- Cross-sector events are handled via event bus with idempotent replay protection.
-
-#### Core Simulation Model (MVP Vertical Slice)
-- **Biome**: one forest frontier biome with dynamic weather and day/night cycles.
-- **Settlement**: one town with merchants, guards, and faction influence.
-- **Questline**: one multi-step chain with branching outcomes and persistent consequences.
-- **Faction AI**: one adaptive faction with policy-driven patrol, threat response, and territory pressure.
-- **Combat/interaction loop**: exploration → encounter → combat → loot/economy → quest progression.
-
-#### Persistence and Recovery Model
-- Authoritative state is server-owned and persisted in Aurora.
-- Player-critical data (inventory, active quests, currency, skill progression) is append-log backed.
-- Sector snapshots are versioned; replay journal is retained for deterministic recovery.
-- Save compatibility contract requires migration adapters for all schema changes.
-
-#### Networking and Session Model
-- Hybrid model: single-player and co-op sessions both run against cloud authoritative services.
-- Session host acts as relay only; no trust is placed in client state mutations.
-- Reconnect flow supports seamless session recovery within RPO target.
 
 ---
 
@@ -282,41 +209,6 @@ Plan → Execute → Observe → Reflect → Patch Memory/Policy → Re-plan
 - Updates applied only after benchmark validation
 - Progressive rollout with automatic rollback
 
-### 7.4 Game Self-Improvement and Autonomous Rebuild Loop
-
-#### Telemetry Inputs for World Adaptation
-- Player progression funnels (tutorial completion, first quest completion, mid-game drop-off)
-- Quest abandonment and retry rates by node
-- Combat metrics (time-to-kill, death hotspots, class/build underperformance)
-- Economy health (currency inflation, sink/source imbalance, item rarity saturation)
-- Runtime reliability (sector load failures, simulation divergence, server tick instability)
-
-#### Mutation Surface (What AI Can Change)
-- NPC behavior policy weights and decision thresholds
-- Spawn tables, encounter pacing, and event frequencies
-- Quest parameterization (timers, objective counts, reward coefficients)
-- Economy coefficients (vendor prices, drop rates, repair costs, sink intensity)
-- Dynamic world pressure variables (faction aggression, patrol density, territory contention)
-
-#### Autonomous Validation and Promotion Pipeline
-1. Generate `AutonomousChangeSet` candidates from clustered failures and game KPIs.
-2. Replay recent traces in offline simulation harness.
-3. Run benchmark suite: progression integrity, economy stability, and server performance.
-4. Deploy to canary shard with bounded player cohort.
-5. Compare canary KPIs and incident rates to baseline.
-6. Promote globally only if all gates pass; otherwise rollback and record `ReflectionRecord`.
-
-#### Immutable Safety Constraints
-- Never delete or silently alter active player inventory entries.
-- Never invalidate active quest state; only forward-compatible transitions are allowed.
-- Never apply schema-breaking changes without migration + replay verification.
-- Never promote world rebuilds that exceed error-budget, latency, or economy volatility guardrails.
-
-#### Risk-Tiered Autonomy
-- **Tier 0 (fully autonomous)**: low-risk numeric tuning (rates, weights, thresholds).
-- **Tier 1 (policy-simulated)**: quest graph logic changes and faction behavior rewrites.
-- **Tier 2 (restricted window)**: structural world rebuilds (sector topology/content regeneration) only after extended canary soak and deterministic restore test.
-
 ---
 
 ## 8. Autonomous Platform Maintenance
@@ -367,21 +259,13 @@ All actions are gated by machine-enforced policy checks and verified post-execut
 - Reliability and chaos tests
 - Load and cost tests
 - Learning effectiveness tests
-- Game simulation parity tests (client/server divergence)
-- Quest/state migration compatibility tests
-- Economy stress and anti-inflation tests
 
 ### Acceptance Gates
-
-#### Infrastructure and Autonomy
 
 - ≥ 80% benchmark success
 - p95 latency < 15s
 - 99.9% availability over 30-day soak
 - Incident containment < 5 minutes
-- Median gameplay session length ≥ 20 minutes in pilot cohort
-- Quest completion rate ≥ 65% for primary questline
-- NPC behavior stability ≥ 95% (no deadlock/reset intervention events per 1,000 NPC-hours)
 
 ---
 
@@ -402,26 +286,22 @@ All actions are gated by machine-enforced policy checks and verified post-execut
 - Tool SDK
 
 ### Days 31–45
-- Game core loop prototype (movement, combat, interaction)
-- World chunk loader
-- Persistence baseline for player/world state
+- Social and Dev domain packs
+- End-to-end workflows
 
 ### Days 46–60
-- Procedural biome generation
-- Quest generation pipeline
-- NPC behavior trees/policy runtime
+- Games domain pack
+- Memory system
+- Reflection and failure clustering
 
 ### Days 61–75
-- Autonomous tuning loop for economy/combat/quest balancing
-- Shadow-mode evaluation against live player simulations
-- Memory and reflection signals integrated into tuning policies
+- Autonomous AIOps and SecOps
+- Direct infrastructure apply control loops
 
 ### Days 76–90
-- Playable open-world demo
-- Crash-free session target ≥ 99.5%
-- Retention proxy metric (D1 return-intent or equivalent) ≥ 35%
-- Automated rebuild drill (full environment + game state recovery)
-- Chaos, security, load, and gameplay quality validation
+- Scale tuning to 10,000+ sessions
+- Chaos, security, and load testing
+- Progressive rollout to production traffic
 
 ---
 
@@ -449,94 +329,7 @@ All actions are gated by machine-enforced policy checks and verified post-execut
 
 ---
 
-## 14. Games Runtime Architecture (Pilot)
-
-This section defines the pilot-game runtime architecture for the Games domain pack and maps each implementation module to a backlog epic anchor.
-
-### 14.1 <a id="epic-games-engine-runtime"></a>Engine and Runtime Choice
-
-**Choice:** Unity client + service-backed simulation runtime (Python/Go microservices on EKS) with AI orchestration integrated through the existing Runtime Plane.
-
-**Rationale:**
-- Faster 90-day delivery for a small team due to mature tooling and asset pipeline.
-- Lower integration risk with existing TypeScript/Python platform primitives (Goal Router, Policy Engine, Agent Kernel).
-- Enables deterministic server-side simulation modules for economy, faction, and quest progression while retaining high-iteration client UX.
-- Keeps an upgrade path open for future headless dedicated simulation shards without reauthoring content.
-
-### 14.2 <a id="epic-games-world-partitioning"></a>World Partitioning, Streaming, and LOD
-
-**Partition model:**
-- World split into **sectors**, each sector composed of fixed-size **tiles** (e.g., 256m x 256m).
-- Runtime uses a 3-ring neighborhood around the player: active ring, warm ring, cold ring.
-
-**Load/unload triggers:**
-- Load active ring when player crosses tile boundary or fast-travel target resolves.
-- Promote warm → active on movement prediction (2–5s horizon).
-- Demote active → warm and warm → cold after configurable idle timeout and distance thresholds.
-- Force-load critical quest tiles for active objectives.
-
-**LOD strategy:**
-- Visual LOD0/1/2/3 based on camera distance and occlusion confidence.
-- Simulation LOD:
-  - Full tick (10–20 Hz) in active tiles
-  - Reduced tick (1–2 Hz) in warm tiles
-  - Event-driven/background state aggregation in cold tiles
-- NPC behavior trees degrade to intent summaries outside active tiles.
-
-### 14.3 <a id="epic-games-simulation-entities"></a>Core Simulation Entities
-
-Canonical entities for MVP and persistence:
-- **Player:** identity, inventory, skills, faction reputation, quest log, position/velocity.
-- **NPC:** archetype, schedule/state machine, faction membership, affinity, dialogue state.
-- **Quest:** chain graph, objective states, prerequisite gates, rewards, fail/timeout paths.
-- **Biome:** climate profile, spawn tables, traversal modifiers, hazard rules.
-- **Resource Node:** type, quality tier, respawn policy, ownership/contest metadata.
-- **Combat Object:** weapon/projectile/effect instance, damage model, status effects, cooldown state.
-
-All entities carry a stable `entity_id`, `version`, and `last_authoritative_tick` to support reconciliation.
-
-### 14.4 <a id="epic-games-world-state"></a>World State Persistence and Replay Model
-
-**Model:** Hybrid authoritative server.
-- Server-authoritative for economy, combat resolution, quest progression, faction state, and anti-cheat checks.
-- Client-authoritative only for short-horizon movement prediction and non-critical animation state.
-
-**Persistence layers:**
-- Redis: hot shard state + transient simulation caches.
-- Aurora PostgreSQL: durable player/NPC/quest/faction snapshots.
-- S3: append-only event logs and replay bundles.
-
-**Replay support:**
-- Event-sourced delta stream per sector with periodic snapshot checkpoints.
-- Deterministic re-sim from checkpoint + deltas for incident review and tuning.
-- Replay API should expose `world_id`, `sector_id`, `tick_start`, `tick_end`, and `seed`.
-
-### 14.5 <a id="epic-games-networking-model"></a>Networking Model
-
-**Pilot mode:** Single-player client session with cloud AI orchestration.
-- Player interacts locally, while cloud services run adaptive NPC/faction reasoning and persistent world updates.
-- Session still writes to authoritative backend to validate progression and gather telemetry.
-
-**Scale path (post-pilot):** Multiplayer authoritative server.
-- Introduce dedicated region shards, interest management, and party/session matchmaking.
-- Preserve same world-state contracts from pilot to avoid model drift.
-
-### 14.6 <a id="epic-games-mvp-vertical-slice"></a>MVP Vertical Slice Definition
-
-The 90-day Games MVP must ship one coherent slice:
-- **One biome:** frontier forest with harvest + combat traversal loops.
-- **One town:** safe hub with vendors, crafting station, and faction bulletin board.
-- **One quest chain:** 5-step chain (intro → gather → defend → branch choice → resolution).
-- **One adaptive NPC faction:** dynamic disposition driven by player actions, scarcity pressure, and conflict outcomes.
-
-**Exit criteria for slice completion:**
-- End-to-end quest chain completion rate ≥ 70% in pilot tests.
-- Faction disposition changes are visible in dialogue, prices, and encounter frequency.
-- Sector load/unload and simulation LOD transitions occur without blocking gameplay.
-
----
-
-## 15. Closing Statement
+## 14. Closing Statement
 
 AegisWorld is not an assistant platform.
 

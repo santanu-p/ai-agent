@@ -1,64 +1,45 @@
-# Local Sandbox Game Prototype
+# AegisWorld Prototype
 
-Minimal single-player sandbox scaffold with world generation, player movement/camera, and save/load flow.
+This repository includes an executable prototype that turns the 90-day plan into a working baseline runtime:
 
-## Project Structure
+- Core platform types (`GoalSpec`, `ExecutionPolicy`, `TaskTrace`, `ReflectionRecord`, `SecurityIncident`, `AutonomousChangeSet`)
+- Policy engine with budget/latency/tool gates plus network/data scope enforcement
+- Agent kernel loop implementing Plan → Execute → Observe → Reflect → Patch Memory/Policy → Re-plan
+- Local circuit breaker and retry logic for runtime resilience
+- Learning engine for reflection clustering and memory compaction
+- In-memory control/runtime service with JSON snapshot persistence
+- HTTP API surface aligned to the plan endpoints and operational metrics
 
-- `game/engine/` - main game loop orchestration
-- `game/world/` - world models + generation interface/implementation
-- `game/ai/` - agent and self-improvement interfaces + minimal implementations
-- `game/systems/` - save/load systems
-- `game/ui/` - camera rendering
-- `server/` - optional local HTTP server scaffold
-- `main.py` - sandbox entrypoint
-
-## Setup
+## Run API server
 
 ```bash
-python3 --version
+python server.py
 ```
 
-No external dependencies are required.
+### Main endpoints
 
-## Run
+- `POST /v1/goals`
+- `GET /v1/goals/{goal_id}`
+- `POST /v1/agents`
+- `GET /v1/agents/{agent_id}`
+- `POST /v1/agents/{agent_id}/execute`
+- `POST /v1/autonomy/tick`
+- `GET /v1/agents/{agent_id}/memory`
+- `POST /v1/domain/social/projects`
+- `POST /v1/domain/dev/pipelines`
+- `POST /v1/domain/games/projects`
+- `GET /v1/incidents`
+- `POST /v1/policies/simulate`
+- `GET /v1/traces`
+- `GET /v1/reflections`
+- `GET /v1/changes`
+- `GET /v1/learning/summary`
+- `POST /v1/learning/compact?agent_id=...&max_items=...`
+- `GET /v1/metrics`
+- `GET /healthz`
+
+## Run tests
 
 ```bash
-python3 main.py
-```
-
-Controls in-game:
-- `w/a/s/d` move player
-- `save` write `savegame.json`
-- `load` read `savegame.json`
-- `quit` exit loop
-
-## Optional health server
-
-```bash
-python3 -m server.local_server
-# then open http://127.0.0.1:8000/health
-```
-
-## Architecture Diagram
-
-```text
-+--------------------+
-|      main.py       |
-|  (entrypoint)      |
-+---------+----------+
-          |
-          v
-+--------------------+      +----------------------+
-| game.engine.loop   +----->+ game.world.generator |
-| run_game_loop()    |      | IWorldGenerator      |
-+----+---------+-----+      +----------------------+
-     |         |
-     |         +------------> game.ai.controllers
-     |                      (IAgentController,
-     |                       ISelfImprovementPipeline)
-     |
-     +---------------------> game.ui.camera
-     |
-     +---------------------> game.systems.save_system
-
+python -m pytest -q
 ```

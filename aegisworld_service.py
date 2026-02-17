@@ -4,6 +4,7 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import RLock
+from time import time
 from typing import Any, Dict, List
 
 from aegisworld_learning import LearningEngine
@@ -14,10 +15,7 @@ from aegisworld_models import (
     SecurityIncident,
     new_id,
 )
-from aegisworld_runtime import AgentKernel, AgentMemory
-
-
-VALID_GOAL_STATES = {"created", "queued", "running", "completed", "blocked", "failed"}
+from aegisworld_runtime import AgentKernel, AgentMemory, AgentRuntimeState
 
 
 def default_policy() -> ExecutionPolicy:
@@ -36,6 +34,7 @@ class Agent:
     name: str
     policy: ExecutionPolicy = field(default_factory=default_policy)
     memory: AgentMemory = field(default_factory=AgentMemory)
+    runtime_state: AgentRuntimeState = field(default_factory=AgentRuntimeState)
 
 
 class AegisWorldService:
@@ -46,13 +45,13 @@ class AegisWorldService:
         self.state_path = Path(state_file)
 
         self.goals: Dict[str, GoalSpec] = {}
-        self.goal_status: Dict[str, str] = {}
         self.agents: Dict[str, Agent] = {}
-        self.queue: List[Dict[str, str]] = []
         self.traces: List[Dict[str, Any]] = []
         self.reflections: List[Dict[str, Any]] = []
         self.incidents: List[SecurityIncident] = []
         self.changes: List[AutonomousChangeSet] = []
+        self.pending_goal_ids: List[str] = []
+        self.incident_containment_seconds: List[float] = []
 
         self._load_state()
 
@@ -68,18 +67,14 @@ class AegisWorldService:
                 domains=payload.get("domains", ["dev"]),
             )
             self.goals[goal.goal_id] = goal
-            self.goal_status[goal.goal_id] = "created"
+            self.pending_goal_ids.append(goal.goal_id)
             self._save_state()
             return goal.to_dict()
 
     def get_goal(self, goal_id: str) -> Dict[str, Any] | None:
         with self.lock:
             goal = self.goals.get(goal_id)
-            if not goal:
-                return None
-            data = goal.to_dict()
-            data["status"] = self.goal_status.get(goal_id, "created")
-            return data
+            return goal.to_dict() if goal else None
 
     def create_agent(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         with self.lock:
@@ -96,33 +91,30 @@ class AegisWorldService:
             return {
                 "agent_id": agent.agent_id,
                 "name": agent.name,
-                "policy": self._policy_to_dict(agent.policy),
+                "policy": {
+                    "tool_allowances": agent.policy.tool_allowances,
+                    "resource_limits": agent.policy.resource_limits,
+                    "network_scope": agent.policy.network_scope,
+                    "data_scope": agent.policy.data_scope,
+                    "rollback_policy": agent.policy.rollback_policy,
+                },
+                "runtime": {
+                    "consecutive_failures": agent.runtime_state.consecutive_failures,
+                    "circuit_open": agent.runtime_state.circuit_open,
+                },
             }
-
-    def update_agent_policy(self, agent_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-        with self.lock:
-            agent = self.agents[agent_id]
-            agent.policy = ExecutionPolicy(
-                tool_allowances=payload.get("tool_allowances", agent.policy.tool_allowances),
-                resource_limits=payload.get("resource_limits", agent.policy.resource_limits),
-                network_scope=payload.get("network_scope", agent.policy.network_scope),
-                data_scope=payload.get("data_scope", agent.policy.data_scope),
-                rollback_policy=payload.get("rollback_policy", agent.policy.rollback_policy),
-            )
-            self._save_state()
-            return {"agent_id": agent_id, "policy": self._policy_to_dict(agent.policy)}
 
     def execute(self, agent_id: str, goal_id: str) -> Dict[str, Any]:
         with self.lock:
             agent = self.agents[agent_id]
             goal = self.goals[goal_id]
-            self.goal_status[goal_id] = "running"
 
             trace, reflection = self.kernel.execute_goal(
                 agent_id=agent.agent_id,
                 goal=goal,
                 policy=agent.policy,
                 memory=agent.memory,
+                runtime_state=agent.runtime_state,
             )
 
             self.traces.append(trace.to_dict())
@@ -132,7 +124,7 @@ class AegisWorldService:
                 self._propose_change(reflection_dict)
 
             if trace.outcome.startswith("blocked:"):
-                self.goal_status[goal_id] = "blocked"
+                start = time()
                 incident = SecurityIncident(
                     incident_id=new_id("inc"),
                     signal_set=["policy_gate_denied"],
@@ -142,46 +134,31 @@ class AegisWorldService:
                     verification_state="verified",
                 )
                 self.incidents.append(incident)
-            else:
-                self.goal_status[goal_id] = "completed"
+                self.incident_containment_seconds.append(max(time() - start, 0.001))
+
+            if goal_id in self.pending_goal_ids and trace.outcome == "success":
+                self.pending_goal_ids.remove(goal_id)
 
             self._save_state()
             return {
                 "trace": trace.to_dict(),
                 "reflection": reflection.to_dict() if reflection else None,
-                "goal_status": self.goal_status[goal_id],
             }
 
-    def assign_goal(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    def autonomous_tick(self, agent_id: str | None = None, max_goals: int = 5) -> Dict[str, Any]:
         with self.lock:
-            agent_id = payload["agent_id"]
-            goal_id = payload["goal_id"]
-            if agent_id not in self.agents:
-                raise KeyError("agent_id")
-            if goal_id not in self.goals:
-                raise KeyError("goal_id")
+            if not self.agents:
+                return {"executed": 0, "results": [], "note": "no_agents"}
+            resolved_agent_id = agent_id or next(iter(self.agents.keys()))
+            goal_ids = list(self.pending_goal_ids[:max_goals])
 
-            self.queue.append({"agent_id": agent_id, "goal_id": goal_id})
-            self.goal_status[goal_id] = "queued"
-            self._save_state()
-            return {"queued": True, "queue_length": len(self.queue)}
-
-    def run_scheduler(self, max_runs: int = 10) -> Dict[str, Any]:
-        with self.lock:
-            executed: List[Dict[str, Any]] = []
-            while self.queue and len(executed) < max_runs:
-                job = self.queue.pop(0)
-                result = self.execute(job["agent_id"], job["goal_id"])
-                executed.append(
-                    {
-                        "agent_id": job["agent_id"],
-                        "goal_id": job["goal_id"],
-                        "outcome": result["trace"]["outcome"],
-                        "goal_status": result["goal_status"],
-                    }
-                )
-            self._save_state()
-            return {"executed": executed, "remaining_queue": len(self.queue)}
+        results: List[Dict[str, Any]] = []
+        for gid in goal_ids:
+            try:
+                results.append(self.execute(resolved_agent_id, gid))
+            except KeyError:
+                continue
+        return {"executed": len(results), "results": results}
 
     def get_memory(self, agent_id: str) -> Dict[str, Any]:
         with self.lock:
@@ -223,26 +200,30 @@ class AegisWorldService:
         with self.lock:
             return [c.to_dict() for c in self.changes]
 
-    def get_queue(self) -> List[Dict[str, str]]:
-        with self.lock:
-            return list(self.queue)
-
-    def stats(self) -> Dict[str, Any]:
+    def metrics(self) -> Dict[str, Any]:
         with self.lock:
             total = len(self.traces)
             success = len([t for t in self.traces if t.get("outcome") == "success"])
-            blocked = len([t for t in self.traces if str(t.get("outcome", "")).startswith("blocked:")])
-            success_rate = (success / total) if total else 0.0
+            blocked = total - success
+            p95_latency = 0
+            if self.traces:
+                latencies = sorted([int(t.get("latency_ms", 0)) for t in self.traces])
+                idx = max(int(0.95 * len(latencies)) - 1, 0)
+                p95_latency = latencies[idx]
+            containment_p95 = 0.0
+            if self.incident_containment_seconds:
+                c = sorted(self.incident_containment_seconds)
+                idx = max(int(0.95 * len(c)) - 1, 0)
+                containment_p95 = c[idx]
             return {
-                "goals": len(self.goals),
-                "agents": len(self.agents),
-                "queue_length": len(self.queue),
-                "executions_total": total,
-                "executions_success": success,
-                "executions_blocked": blocked,
-                "success_rate": round(success_rate, 4),
+                "total_traces": total,
+                "success_traces": success,
+                "blocked_traces": blocked,
+                "success_rate": (success / total) if total else 0.0,
+                "p95_latency_ms": p95_latency,
+                "pending_goals": len(self.pending_goal_ids),
                 "incidents": len(self.incidents),
-                "changes": len(self.changes),
+                "p95_incident_containment_s": containment_p95,
             }
 
     def simulate_policy(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -257,7 +238,16 @@ class AegisWorldService:
         requested_tools = payload.get("requested_tools", ["planner"])
         estimated_cost = float(payload.get("estimated_cost", 1.0))
         estimated_latency_ms = int(payload.get("estimated_latency_ms", 1000))
-        decision = self.kernel.policy_engine.evaluate(policy, requested_tools, estimated_cost, estimated_latency_ms)
+        requested_network_scope = payload.get("requested_network_scope")
+        requested_data_scope = payload.get("requested_data_scope")
+        decision = self.kernel.policy_engine.evaluate(
+            policy,
+            requested_tools,
+            estimated_cost,
+            estimated_latency_ms,
+            requested_network_scope=requested_network_scope,
+            requested_data_scope=requested_data_scope,
+        )
         return decision.to_dict()
 
     def learning_summary(self) -> Dict[str, Any]:
@@ -285,39 +275,40 @@ class AegisWorldService:
         )
         self.changes.append(change)
 
-    def _policy_to_dict(self, policy: ExecutionPolicy) -> Dict[str, Any]:
-        return {
-            "tool_allowances": policy.tool_allowances,
-            "resource_limits": policy.resource_limits,
-            "network_scope": policy.network_scope,
-            "data_scope": policy.data_scope,
-            "rollback_policy": policy.rollback_policy,
-        }
-
     def _save_state(self) -> None:
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
 
         payload = {
             "goals": [g.to_dict() for g in self.goals.values()],
-            "goal_status": self.goal_status,
             "agents": [
                 {
                     "agent_id": a.agent_id,
                     "name": a.name,
-                    "policy": self._policy_to_dict(a.policy),
+                    "policy": {
+                        "tool_allowances": a.policy.tool_allowances,
+                        "resource_limits": a.policy.resource_limits,
+                        "network_scope": a.policy.network_scope,
+                        "data_scope": a.policy.data_scope,
+                        "rollback_policy": a.policy.rollback_policy,
+                    },
                     "memory": {
                         "episodic": a.memory.episodic,
                         "session": a.memory.session,
                         "semantic": a.memory.semantic,
                     },
+                    "runtime_state": {
+                        "consecutive_failures": a.runtime_state.consecutive_failures,
+                        "circuit_open": a.runtime_state.circuit_open,
+                    },
                 }
                 for a in self.agents.values()
             ],
-            "queue": self.queue,
             "traces": self.traces,
             "reflections": self.reflections,
             "incidents": [i.to_dict() for i in self.incidents],
             "changes": [c.to_dict() for c in self.changes],
+            "pending_goal_ids": self.pending_goal_ids,
+            "incident_containment_seconds": self.incident_containment_seconds,
         }
         self.state_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
@@ -331,15 +322,6 @@ class AegisWorldService:
             goal = GoalSpec(**g)
             self.goals[goal.goal_id] = goal
 
-        self.goal_status = {
-            goal_id: state
-            for goal_id, state in data.get("goal_status", {}).items()
-            if state in VALID_GOAL_STATES
-        }
-
-        for goal_id in self.goals:
-            self.goal_status.setdefault(goal_id, "created")
-
         for a in data.get("agents", []):
             policy_data = a.get("policy", {})
             policy = ExecutionPolicy(**policy_data)
@@ -349,11 +331,23 @@ class AegisWorldService:
                 session=memory_data.get("session", {}),
                 semantic=memory_data.get("semantic", {}),
             )
-            agent = Agent(agent_id=a["agent_id"], name=a["name"], policy=policy, memory=memory)
+            runtime_data = a.get("runtime_state", {})
+            runtime_state = AgentRuntimeState(
+                consecutive_failures=runtime_data.get("consecutive_failures", 0),
+                circuit_open=runtime_data.get("circuit_open", False),
+            )
+            agent = Agent(
+                agent_id=a["agent_id"],
+                name=a["name"],
+                policy=policy,
+                memory=memory,
+                runtime_state=runtime_state,
+            )
             self.agents[agent.agent_id] = agent
 
-        self.queue = data.get("queue", [])
         self.traces = data.get("traces", [])
         self.reflections = data.get("reflections", [])
         self.incidents = [SecurityIncident(**i) for i in data.get("incidents", [])]
         self.changes = [AutonomousChangeSet(**c) for c in data.get("changes", [])]
+        self.pending_goal_ids = data.get("pending_goal_ids", [])
+        self.incident_containment_seconds = data.get("incident_containment_seconds", [])
