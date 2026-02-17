@@ -454,7 +454,94 @@ All actions are gated by machine-enforced policy checks and verified post-execut
 
 ---
 
-## 14. Closing Statement
+## 14. Games Runtime Architecture (Pilot)
+
+This section defines the pilot-game runtime architecture for the Games domain pack and maps each implementation module to a backlog epic anchor.
+
+### 14.1 <a id="epic-games-engine-runtime"></a>Engine and Runtime Choice
+
+**Choice:** Unity client + service-backed simulation runtime (Python/Go microservices on EKS) with AI orchestration integrated through the existing Runtime Plane.
+
+**Rationale:**
+- Faster 90-day delivery for a small team due to mature tooling and asset pipeline.
+- Lower integration risk with existing TypeScript/Python platform primitives (Goal Router, Policy Engine, Agent Kernel).
+- Enables deterministic server-side simulation modules for economy, faction, and quest progression while retaining high-iteration client UX.
+- Keeps an upgrade path open for future headless dedicated simulation shards without reauthoring content.
+
+### 14.2 <a id="epic-games-world-partitioning"></a>World Partitioning, Streaming, and LOD
+
+**Partition model:**
+- World split into **sectors**, each sector composed of fixed-size **tiles** (e.g., 256m x 256m).
+- Runtime uses a 3-ring neighborhood around the player: active ring, warm ring, cold ring.
+
+**Load/unload triggers:**
+- Load active ring when player crosses tile boundary or fast-travel target resolves.
+- Promote warm → active on movement prediction (2–5s horizon).
+- Demote active → warm and warm → cold after configurable idle timeout and distance thresholds.
+- Force-load critical quest tiles for active objectives.
+
+**LOD strategy:**
+- Visual LOD0/1/2/3 based on camera distance and occlusion confidence.
+- Simulation LOD:
+  - Full tick (10–20 Hz) in active tiles
+  - Reduced tick (1–2 Hz) in warm tiles
+  - Event-driven/background state aggregation in cold tiles
+- NPC behavior trees degrade to intent summaries outside active tiles.
+
+### 14.3 <a id="epic-games-simulation-entities"></a>Core Simulation Entities
+
+Canonical entities for MVP and persistence:
+- **Player:** identity, inventory, skills, faction reputation, quest log, position/velocity.
+- **NPC:** archetype, schedule/state machine, faction membership, affinity, dialogue state.
+- **Quest:** chain graph, objective states, prerequisite gates, rewards, fail/timeout paths.
+- **Biome:** climate profile, spawn tables, traversal modifiers, hazard rules.
+- **Resource Node:** type, quality tier, respawn policy, ownership/contest metadata.
+- **Combat Object:** weapon/projectile/effect instance, damage model, status effects, cooldown state.
+
+All entities carry a stable `entity_id`, `version`, and `last_authoritative_tick` to support reconciliation.
+
+### 14.4 <a id="epic-games-world-state"></a>World State Persistence and Replay Model
+
+**Model:** Hybrid authoritative server.
+- Server-authoritative for economy, combat resolution, quest progression, faction state, and anti-cheat checks.
+- Client-authoritative only for short-horizon movement prediction and non-critical animation state.
+
+**Persistence layers:**
+- Redis: hot shard state + transient simulation caches.
+- Aurora PostgreSQL: durable player/NPC/quest/faction snapshots.
+- S3: append-only event logs and replay bundles.
+
+**Replay support:**
+- Event-sourced delta stream per sector with periodic snapshot checkpoints.
+- Deterministic re-sim from checkpoint + deltas for incident review and tuning.
+- Replay API should expose `world_id`, `sector_id`, `tick_start`, `tick_end`, and `seed`.
+
+### 14.5 <a id="epic-games-networking-model"></a>Networking Model
+
+**Pilot mode:** Single-player client session with cloud AI orchestration.
+- Player interacts locally, while cloud services run adaptive NPC/faction reasoning and persistent world updates.
+- Session still writes to authoritative backend to validate progression and gather telemetry.
+
+**Scale path (post-pilot):** Multiplayer authoritative server.
+- Introduce dedicated region shards, interest management, and party/session matchmaking.
+- Preserve same world-state contracts from pilot to avoid model drift.
+
+### 14.6 <a id="epic-games-mvp-vertical-slice"></a>MVP Vertical Slice Definition
+
+The 90-day Games MVP must ship one coherent slice:
+- **One biome:** frontier forest with harvest + combat traversal loops.
+- **One town:** safe hub with vendors, crafting station, and faction bulletin board.
+- **One quest chain:** 5-step chain (intro → gather → defend → branch choice → resolution).
+- **One adaptive NPC faction:** dynamic disposition driven by player actions, scarcity pressure, and conflict outcomes.
+
+**Exit criteria for slice completion:**
+- End-to-end quest chain completion rate ≥ 70% in pilot tests.
+- Faction disposition changes are visible in dialogue, prices, and encounter frequency.
+- Sector load/unload and simulation LOD transitions occur without blocking gameplay.
+
+---
+
+## 15. Closing Statement
 
 AegisWorld is not an assistant platform.
 
