@@ -136,7 +136,7 @@ class AegisWorldService:
                 self.incidents.append(incident)
                 self.incident_containment_seconds.append(max(time() - start, 0.001))
 
-            if goal_id in self.pending_goal_ids and trace.outcome == "success":
+            if goal_id in self.pending_goal_ids:
                 self.pending_goal_ids.remove(goal_id)
 
             self._save_state()

@@ -120,6 +120,36 @@ def test_service_workflow_end_to_end_learning_metrics_and_autonomy_tick(tmp_path
     assert 0.0 <= metrics["success_rate"] <= 1.0
 
 
+def test_autonomous_tick_dequeues_blocked_goals(tmp_path: Path) -> None:
+    state_file = tmp_path / "state.json"
+    service = AegisWorldService(state_file=str(state_file))
+    agent = service.create_agent({"name": "blocked-goal-agent"})
+
+    blocked_goal = service.create_goal(
+        {
+            "intent": "Need executor under planner-only policy",
+            "domains": ["dev"],
+        }
+    )
+
+    service.agents[agent["agent_id"]].policy = ExecutionPolicy(
+        tool_allowances=["planner"],
+        resource_limits={"max_budget": 20, "max_latency_ms": 5000},
+        network_scope="public_internet",
+        data_scope="org_scoped",
+        rollback_policy="auto",
+    )
+
+    first_tick = service.autonomous_tick(agent_id=agent["agent_id"], max_goals=1)
+
+    assert first_tick["executed"] == 1
+    assert first_tick["results"][0]["trace"]["outcome"].startswith("blocked:")
+    assert blocked_goal["goal_id"] not in service.pending_goal_ids
+
+    second_tick = service.autonomous_tick(agent_id=agent["agent_id"], max_goals=1)
+    assert second_tick["executed"] == 0
+
+
 def test_state_persistence_roundtrip(tmp_path: Path) -> None:
     state_file = tmp_path / "state.json"
     service = AegisWorldService(state_file=str(state_file))
