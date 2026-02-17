@@ -1,0 +1,10 @@
+{
+  "patch_id": "sample-patch-001",
+  "repo_path": ".",
+  "changed_files": ["ai/policy/engine.py", "ai/policy/gates.py"],
+  "changed_domains": ["policy", "telemetry"],
+  "user_content_blobs": ["Summarize this gameplay session and extract useful state."],
+  "performance_metrics": {"frame_time_ms_p95": 12.4, "memory_mb_peak": 380.2},
+  "canary_metrics": {"error_rate": 0.003, "p95_latency_ms": 180, "timeout_rate": 0.001},
+  "save_snapshots": [{"version": 2, "player_id": "p-001", "world_state": {"zone": "north-hub"}, "inventory": ["medkit", "shield"]}]
+}
