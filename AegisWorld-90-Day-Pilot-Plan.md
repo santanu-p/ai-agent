@@ -100,42 +100,39 @@ Human involvement is limited to **goal specification and policy envelope definit
 
 ##### Learning Plane — Game Evolution
 
-This subsection extends the Games domain learning loop with explicit world-evolution controls that integrate with `ReflectionRecord`, `AutonomousChangeSet`, and the validation process in [Testing and Acceptance](#10-testing-and-acceptance).
+To support autonomous game-world evolution in the Games domain, the Learning Plane adds a dedicated closed-loop pipeline that links `ReflectionRecord` diagnostics, `AutonomousChangeSet` packaging, and `Testing and Acceptance` gate outcomes.
 
 **Telemetry Inputs**
 - Player progression funnels
-- Quest abandonment rates by stage and region
-- Combat death heatmaps and encounter-level death spikes
-- Economy inflation and currency velocity
-- Server performance under live game load (tick latency, shard saturation, reconnect rate)
+- Quest abandonment rates and dropout loci
+- Combat death distributions
+- Economy inflation and sink/source imbalance
+- Server performance saturation signals
 
 **Mutation Targets**
 - NPC behavior policies
-- Spawn rates and spawn mix composition
-- Quest tuning (difficulty, pacing, rewards)
-- Economy coefficients (drop rates, sink/source multipliers)
-- Map event frequency and timing windows
+- Spawn rates and encounter density curves
+- Quest tuning parameters (difficulty/reward pacing)
+- Economy coefficients (drop rates, sink multipliers, pricing)
+- Map event frequency schedules
 
 **Validation Stages**
-1. Offline simulation against representative player behavior traces.
-2. Canary shard rollout with bounded blast radius and live telemetry comparison.
-3. Rollback criteria enforcement tied to defined regression thresholds.
-4. Progression integrity checks to ensure no invalid progression states are introduced.
-
-Each proposed world mutation is represented as an `AutonomousChangeSet`, while causal analysis and remediations are captured as `ReflectionRecord` entries before promotion.
+1. Offline simulation against historical and synthetic cohorts
+2. Canary shard rollout with bounded blast radius
+3. Explicit rollback criteria tied to stability and fairness regressions
+4. Progression integrity checks to prevent invalid advancement states
 
 **Immutable Constraints**
-- Never delete or invalidate active player inventory.
-- Never delete or invalidate active player quests.
-- Preserve save compatibility schema across rebuilds and migrations.
+- Never delete or invalidate active player inventory or active quests
+- Preserve save compatibility schema across all world mutations
 
 **Approval Mode**
-- Fully autonomous execution is allowed only for low-risk parameter changes.
-- High-risk structural world changes require a policy simulation gate before rollout.
+- Fully autonomous approval is allowed only for low-risk parameter changes
+- High-risk structural world changes must pass a policy simulation gate before promotion
 
 **Rollback Artifacts and Recovery SLA**
-- Persist rollback artifacts for every world rebuild: pre-change world snapshot, migration manifest, change diff, validation report, and recovery playbook.
-- For failed world rebuilds, recovery must restore player-facing service to the last known-good world state within the platform RTO target (30 minutes) and with data loss bounded by the platform RPO target (5 minutes).
+- Every world rebuild attempt must emit rollback artifacts: state diff manifests, migration journals, and replay checkpoints
+- Failed rebuilds must satisfy recovery SLA targets with deterministic restore workflows and auditable incident records
 
 #### Security Plane (Python + Native Cloud)
 - Threat detection (GuardDuty, WAF, audit logs)
