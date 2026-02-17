@@ -103,3 +103,28 @@ def test_benchmark_run(tmp_path: Path) -> None:
     summary = service.benchmark_run({"agent_id": agent["agent_id"], "goal_ids": [goal1["goal_id"], goal2["goal_id"]]})
     assert summary["total_runs"] >= 2
     assert 0.0 <= summary["success_rate"] <= 1.0
+
+
+def test_goal_budget_isolated_per_goal(tmp_path: Path) -> None:
+    service = AegisWorldService(state_file=str(tmp_path / "state.json"))
+    agent = service.create_agent({"name": "budget-agent"})
+    goal1 = service.create_goal({"intent": "first", "domains": ["dev"], "budget": 4.2})
+    goal2 = service.create_goal({"intent": "second", "domains": ["dev"], "budget": 4.2})
+
+    result1 = service.execute(agent["agent_id"], goal1["goal_id"])
+    assert result1["trace"]["outcome"] == "success"
+
+    result2 = service.execute(agent["agent_id"], goal2["goal_id"])
+    assert result2["trace"]["outcome"] == "success"
+
+
+def test_goal_budget_precheck_blocks_overspend(tmp_path: Path) -> None:
+    service = AegisWorldService(state_file=str(tmp_path / "state.json"))
+    agent = service.create_agent({"name": "budget-precheck-agent"})
+    goal = service.create_goal({"intent": "tight-budget", "domains": ["dev"], "budget": 4.0})
+
+    result = service.execute(agent["agent_id"], goal["goal_id"])
+    assert result["trace"]["outcome"] == "blocked:goal_budget_precheck"
+    agent_state = service.get_agent(agent["agent_id"])
+    assert agent_state is not None
+    assert agent_state["goal_spend"].get(goal["goal_id"], 0.0) == 0.0

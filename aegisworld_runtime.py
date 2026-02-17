@@ -67,6 +67,12 @@ class AgentKernel:
         )
         return trace, reflection
 
+    def estimate_run_cost(self, goal: GoalSpec) -> float:
+        """Return a conservative pre-execution cost estimate for a goal run."""
+        plan = self._plan(goal)
+        estimate = self._estimate(plan)
+        return float(estimate["cost"])
+
     def _plan(self, goal: GoalSpec) -> List[str]:
         return [
             f"decompose_goal:{goal.intent}",
@@ -78,7 +84,7 @@ class AgentKernel:
         tool_count = 2 if "select_tools" in plan else 1
         return {
             "tools": ["planner", "executor"][:tool_count],
-            "cost": 2.5,
+            "cost": 4.2,
             "latency_ms": 1200,
         }
 
