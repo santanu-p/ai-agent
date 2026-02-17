@@ -45,6 +45,30 @@ class GeneratedPatch:
 
 
 @dataclass
+class PatchProposal:
+    """Legacy patch proposal shape produced by older generators."""
+
+    prompt_version: str
+    prompt: str
+    proposed_diff: str
+    target_files: list[str]
+
+
+def as_generated_patch(proposal: PatchProposal | GeneratedPatch) -> GeneratedPatch:
+    """Normalize proposal objects for verifiers expecting GeneratedPatch."""
+
+    if isinstance(proposal, GeneratedPatch):
+        return proposal
+
+    return GeneratedPatch(
+        prompt_version=proposal.prompt_version,
+        prompt_text=proposal.prompt,
+        diff=proposal.proposed_diff,
+        target_files=proposal.target_files,
+    )
+
+
+@dataclass
 class VerificationResults:
     """Outputs from static and simulation checks."""
 

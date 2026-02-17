@@ -3,7 +3,7 @@ from __future__ import annotations
 import subprocess
 from typing import Sequence
 
-from .models import GeneratedPatch, VerificationResults
+from .models import GeneratedPatch, PatchProposal, VerificationResults, as_generated_patch
 
 
 class PatchVerifier:
@@ -35,7 +35,8 @@ class PatchVerifier:
                 all_passed = False
         return all_passed, "\n\n".join(outputs)
 
-    def verify(self, patch: GeneratedPatch) -> VerificationResults:
+    def verify(self, patch: GeneratedPatch | PatchProposal) -> VerificationResults:
+        _ = as_generated_patch(patch)
         static_ok, static_report = self._run_commands(self.static_checks)
         sim_ok, sim_report = self._run_commands(self.simulation_checks)
         return VerificationResults(
