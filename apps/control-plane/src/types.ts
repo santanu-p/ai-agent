@@ -83,7 +83,29 @@ export interface PolicySimulationResult {
   baseline_score: number;
   patch_score: number;
   projected_delta: number;
+  dimension_scores: Record<PolicyScoreDimension, PolicyDimensionScore>;
+  violated_constraints: string[];
   blockers: string[];
   recommendation: "approve" | "reject" | "needs_review";
 }
 
+export type PolicyScoreDimension =
+  | "fairness"
+  | "latency"
+  | "exploit_risk"
+  | "economy_stability"
+  | "reliability";
+
+export interface PolicyDimensionScore {
+  baseline: number;
+  patch: number;
+  delta: number;
+  weight: number;
+}
+
+export interface PolicyPatchMetadata {
+  summary: string;
+  asserted_constraint_ids: string[];
+  objective_impacts: Partial<Record<PolicyScoreDimension, number>>;
+  risk_categories?: string[];
+}
