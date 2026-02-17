@@ -12,14 +12,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+          cache: npm
+          cache-dependency-path: package-lock.json
       - run: npm ci
-        working-directory: apps/control-plane
-      - run: npm run test
-        working-directory: apps/control-plane
+      - run: npm run -w apps/control-plane test
 
   python-services:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         service: [runtime-plane, learning-plane, security-plane]
     steps:
@@ -27,8 +28,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -r requirements.txt
+      - run: python -m pip install --upgrade pip
         working-directory: services/${{ matrix.service }}
-      - run: pytest
+      - run: python -m pip install -r requirements.txt
         working-directory: services/${{ matrix.service }}
-
+      - run: python -m pytest -q tests
+        working-directory: services/${{ matrix.service }}
+        env:
+          PYTHONPATH: .
