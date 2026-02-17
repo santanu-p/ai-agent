@@ -2,43 +2,51 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .patch_verifier import VerificationResult
+from .models import RolloutDecision, VerificationResults
 
 
-@dataclass(slots=True)
-class RolloutDecision:
-    approved: bool
-    canary_fraction: float
-    reason: str
-    rollback_pointer: str | None
+@dataclass
+class ReleasePolicy:
+    min_fitness_for_canary: float = 0.65
+    default_canary_fraction: float = 0.1
+    max_canary_fraction: float = 0.5
 
 
 class ReleaseManager:
-    """Handles canary rollout decisions and rollback pointers."""
+    """Decides canary rollout fraction and rollback pointer."""
 
-    def __init__(self, max_canary_fraction: float = 0.1) -> None:
-        self.max_canary_fraction = max_canary_fraction
+    def __init__(self, policy: ReleasePolicy | None = None) -> None:
+        self.policy = policy or ReleasePolicy()
 
     def decide(
         self,
-        *,
-        verification: VerificationResult,
-        candidate_revision: str,
-        stable_revision: str,
-        requested_fraction: float,
+        fitness_score: float,
+        verification: VerificationResults,
+        previous_stable_version: str,
     ) -> RolloutDecision:
         if not verification.passed:
             return RolloutDecision(
-                approved=False,
+                decision="reject",
                 canary_fraction=0.0,
-                reason="Verification failed",
-                rollback_pointer=stable_revision,
+                reason="Verification failed.",
+                rollback_pointer=previous_stable_version,
             )
 
-        canary_fraction = min(max(requested_fraction, 0.0), self.max_canary_fraction)
+        if fitness_score >= self.policy.min_fitness_for_canary:
+            fraction = min(
+                self.policy.max_canary_fraction,
+                max(self.policy.default_canary_fraction, fitness_score / 2),
+            )
+            return RolloutDecision(
+                decision="canary",
+                canary_fraction=round(fraction, 3),
+                reason="Fitness and verification passed.",
+                rollback_pointer=previous_stable_version,
+            )
+
         return RolloutDecision(
-            approved=True,
-            canary_fraction=canary_fraction,
-            reason="Approved for canary rollout",
-            rollback_pointer=stable_revision if candidate_revision != stable_revision else None,
+            decision="hold",
+            canary_fraction=0.0,
+            reason="Fitness below threshold.",
+            rollback_pointer=previous_stable_version,
         )

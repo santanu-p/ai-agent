@@ -1,57 +1,57 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Any
+from dataclasses import dataclass
+from typing import Iterable
+
+from .models import MetricsSnapshot, utc_now_iso
 
 
-@dataclass(slots=True)
-class MetricsSnapshot:
-    """Normalized gameplay telemetry used by the improvement loop."""
-
-    captured_at: str
-    retention_d1: float
-    retention_d7: float
-    quest_completion_rate: float
-    death_causes: dict[str, int] = field(default_factory=dict)
-    economy_inflation_index: float = 1.0
-    avg_session_minutes: float = 0.0
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "captured_at": self.captured_at,
-            "retention_d1": self.retention_d1,
-            "retention_d7": self.retention_d7,
-            "quest_completion_rate": self.quest_completion_rate,
-            "death_causes": self.death_causes,
-            "economy_inflation_index": self.economy_inflation_index,
-            "avg_session_minutes": self.avg_session_minutes,
-            "metadata": self.metadata,
-        }
+@dataclass
+class SessionEvent:
+    session_id: str
+    day_retained: int
+    quest_completed: bool
+    death_cause: str | None
+    economy_delta_pct: float
 
 
 class TelemetryCollector:
-    """Collects core gameplay metrics and emits a snapshot per iteration."""
+    """Aggregates gameplay events into optimization metrics."""
 
-    def collect(
-        self,
-        *,
-        retention_d1: float,
-        retention_d7: float,
-        quest_completion_rate: float,
-        death_causes: dict[str, int],
-        economy_inflation_index: float,
-        avg_session_minutes: float,
-        metadata: dict[str, Any] | None = None,
-    ) -> MetricsSnapshot:
+    def collect(self, events: Iterable[SessionEvent]) -> MetricsSnapshot:
+        events = list(events)
+        active_sessions = len(events)
+        if active_sessions == 0:
+            return MetricsSnapshot(
+                timestamp=utc_now_iso(),
+                retention_d1=0.0,
+                retention_d7=0.0,
+                quest_completion_rate=0.0,
+                top_death_causes={},
+                economy_inflation_index=0.0,
+                active_sessions=0,
+            )
+
+        retention_d1 = sum(1 for e in events if e.day_retained >= 1) / active_sessions
+        retention_d7 = sum(1 for e in events if e.day_retained >= 7) / active_sessions
+        quest_completion_rate = sum(1 for e in events if e.quest_completed) / active_sessions
+
+        death_causes: dict[str, int] = {}
+        for event in events:
+            if event.death_cause:
+                death_causes[event.death_cause] = death_causes.get(event.death_cause, 0) + 1
+
+        top_death_causes = dict(
+            sorted(death_causes.items(), key=lambda kv: kv[1], reverse=True)[:5]
+        )
+        economy_inflation_index = sum(e.economy_delta_pct for e in events) / active_sessions
+
         return MetricsSnapshot(
-            captured_at=datetime.now(tz=timezone.utc).isoformat(),
+            timestamp=utc_now_iso(),
             retention_d1=retention_d1,
             retention_d7=retention_d7,
             quest_completion_rate=quest_completion_rate,
-            death_causes=death_causes,
+            top_death_causes=top_death_causes,
             economy_inflation_index=economy_inflation_index,
-            avg_session_minutes=avg_session_minutes,
-            metadata=metadata or {},
+            active_sessions=active_sessions,
         )

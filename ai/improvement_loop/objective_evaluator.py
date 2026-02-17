@@ -1,53 +1,42 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-
-from .telemetry_collector import MetricsSnapshot
-
-
-@dataclass(slots=True)
-class ObjectiveWeights:
-    retention: float = 0.35
-    quest_completion: float = 0.25
-    deaths: float = 0.20
-    economy_stability: float = 0.20
-
-
-@dataclass(slots=True)
-class FitnessScore:
-    total: float
-    components: dict[str, float]
+from .models import MetricsSnapshot, ObjectiveScores
 
 
 class ObjectiveEvaluator:
-    """Evaluates how healthy the game state is given a metrics snapshot."""
+    """Computes fitness score from key product objectives."""
 
-    def __init__(self, weights: ObjectiveWeights | None = None) -> None:
-        self.weights = weights or ObjectiveWeights()
+    def __init__(
+        self,
+        retention_weight: float = 0.4,
+        progression_weight: float = 0.3,
+        economy_weight: float = 0.2,
+        stability_weight: float = 0.1,
+    ) -> None:
+        self.retention_weight = retention_weight
+        self.progression_weight = progression_weight
+        self.economy_weight = economy_weight
+        self.stability_weight = stability_weight
 
-    def evaluate(self, snapshot: MetricsSnapshot) -> FitnessScore:
-        retention = (snapshot.retention_d1 + snapshot.retention_d7) / 2
-        quest_completion = snapshot.quest_completion_rate
+    def evaluate(self, metrics: MetricsSnapshot) -> ObjectiveScores:
+        retention_score = min(1.0, (metrics.retention_d1 * 0.5 + metrics.retention_d7 * 0.5) / 0.5)
+        progression_score = min(1.0, metrics.quest_completion_rate / 0.75)
+        economy_score = max(0.0, 1.0 - abs(metrics.economy_inflation_index) / 0.1)
 
-        total_deaths = max(sum(snapshot.death_causes.values()), 1)
-        top_death_ratio = max(snapshot.death_causes.values(), default=0) / total_deaths
-        death_health = max(0.0, 1.0 - top_death_ratio)
-
-        inflation_delta = abs(1.0 - snapshot.economy_inflation_index)
-        economy_stability = max(0.0, 1.0 - inflation_delta)
+        total_deaths = sum(metrics.top_death_causes.values())
+        deaths_per_session = total_deaths / max(metrics.active_sessions, 1)
+        stability_score = max(0.0, 1.0 - deaths_per_session / 2.0)
 
         components = {
-            "retention": retention,
-            "quest_completion": quest_completion,
-            "deaths": death_health,
-            "economy_stability": economy_stability,
+            "retention": retention_score,
+            "progression": progression_score,
+            "economy": economy_score,
+            "stability": stability_score,
         }
-
-        total = (
-            components["retention"] * self.weights.retention
-            + components["quest_completion"] * self.weights.quest_completion
-            + components["deaths"] * self.weights.deaths
-            + components["economy_stability"] * self.weights.economy_stability
+        overall = (
+            retention_score * self.retention_weight
+            + progression_score * self.progression_weight
+            + economy_score * self.economy_weight
+            + stability_score * self.stability_weight
         )
-
-        return FitnessScore(total=round(total, 4), components=components)
+        return ObjectiveScores(overall_fitness=overall, score_components=components)

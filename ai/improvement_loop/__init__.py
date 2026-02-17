@@ -1,28 +1,22 @@
-"""Improvement loop package for telemetry-driven game tuning."""
-
-from .engine import ImprovementLoopEngine, ImprovementLoopResult
-from .iteration_store import IterationStore, IterationRecord
-from .objective_evaluator import ObjectiveEvaluator, ObjectiveWeights, FitnessScore
-from .patch_generator import PatchGenerator, PatchProposal
-from .patch_verifier import PatchVerifier, VerificationResult, VerificationCheck
-from .release_manager import ReleaseManager, RolloutDecision
-from .telemetry_collector import TelemetryCollector, MetricsSnapshot
+from .loop import ImprovementLoop
+from .models import IterationRecord, IterationStore
+from .objective_evaluator import ObjectiveEvaluator
+from .patch_generator import PatchConstraints, PatchGenerator, PatchModelClient
+from .patch_verifier import PatchVerifier
+from .release_manager import ReleaseManager, ReleasePolicy
+from .telemetry_collector import SessionEvent, TelemetryCollector
 
 __all__ = [
-    "ImprovementLoopEngine",
-    "ImprovementLoopResult",
-    "IterationStore",
+    "ImprovementLoop",
     "IterationRecord",
+    "IterationStore",
     "ObjectiveEvaluator",
-    "ObjectiveWeights",
-    "FitnessScore",
+    "PatchConstraints",
     "PatchGenerator",
-    "PatchProposal",
+    "PatchModelClient",
     "PatchVerifier",
-    "VerificationResult",
-    "VerificationCheck",
     "ReleaseManager",
-    "RolloutDecision",
+    "ReleasePolicy",
+    "SessionEvent",
     "TelemetryCollector",
-    "MetricsSnapshot",
 ]

@@ -1,20 +1,21 @@
-# Improvement Loop
+# Improvement Loop Components
 
-This package provides a telemetry-driven iterative improvement loop with the following components:
+This package implements an iterative optimization loop for live gameplay tuning.
 
-- `telemetry_collector`: captures gameplay metrics such as retention proxies, quest completion, death causes, and economy inflation.
-- `objective_evaluator`: computes weighted fitness scores from a metrics snapshot.
-- `patch_generator`: asks a model client to produce constrained config/code diffs.
-- `patch_verifier`: runs static checks and simulation tests for candidate patches.
-- `release_manager`: approves/rejects canary rollout to a fraction of sessions and records rollback pointers.
-- `iteration_store`: persists each iteration artifact as JSON under `ai/improvement_loop/iterations/`.
+## Components
 
-## Stored iteration fields
+- `telemetry_collector`: aggregates gameplay metrics including retention proxies, quest completion, death causes, and economy inflation.
+- `objective_evaluator`: computes objective-level and aggregate fitness scores.
+- `patch_generator`: asks an LLM for constrained config/code patch diffs.
+- `patch_verifier`: executes static checks and simulation test commands.
+- `release_manager`: supports canary rollout decisions to a fraction of sessions.
 
-Each iteration JSON record includes:
+## Iteration storage
 
-1. Input metrics snapshot,
-2. Prompt/version,
-3. Proposed diff,
-4. Verification results,
-5. Rollout decision and rollback pointer.
+Each iteration is persisted as JSON by `IterationStore` in `ai/improvement_loop/iterations/<iteration_id>.json` with:
+
+- input metrics snapshot,
+- prompt/version,
+- proposed diff,
+- verification results,
+- rollout decision and rollback pointer.
