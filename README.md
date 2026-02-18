@@ -52,6 +52,8 @@ npm ci
 npm run -w apps/control-plane dev
 ```
 
+By default, the control plane now falls back to local models when `OPENAI_API_KEY` and/or `ANTHROPIC_API_KEY` are not configured. This allows fresh contributors to run the project without external model API keys. Open-source routing supports Qwen/GLM model families (including an optional GLM+Qwen ensemble path when requested in the goal intent).
+
 PowerShell fallback when script execution blocks `npm`:
 
 ```powershell
